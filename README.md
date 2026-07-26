@@ -22,6 +22,18 @@ Large or derived files are intentionally excluded from Git: the local Python
 environment, official Kaggle downloads and simulator binaries, raw replay JSON,
 submission archives, detailed traces, caches, and leaderboard snapshots.
 
+## Agent versions
+
+- **V1:** original legal-action baseline.
+- **V2:** generic action ranking with a compact replay-trained tie-breaker.
+- **V3:** state-aware card, attacker, and energy planner.
+- **V4:** Crustle/Cornerstone deck with a bounded mandatory-attack guard.
+- **V5:** V4's core plus state-driven hand control for large-hand engines.
+
+Each version directory contains its editable `main.py` policy and 60-card
+`deck.csv`. Submission archives are generated from these two source files and are
+not versioned because they can be reproduced exactly with the build tool.
+
 ## Local setup
 
 1. Join the Kaggle competition and accept its rules.
