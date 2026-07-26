@@ -1,0 +1,50 @@
+# Local Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+kaggle.json
+*.pem
+*.key
+
+# Operating-system and editor files
+.DS_Store
+.idea/
+.vscode/
+
+# Internal working notes (contain live competition strategy and account details)
+AGENTS.md
+PROJECT_PLAN.md
+
+# Official Kaggle downloads and simulator binaries
+# Download these directly after accepting the competition rules.
+competition_data/
+
+# Raw replay corpus: large, generated, and contains player-level match data
+scouting_replays/
+tools/evaluation_decks/
+
+# Submission bundles and generated experiment traces
+artifacts/*
+!artifacts/v4_matrix_after_88290739_60.csv
+!artifacts/v4_top10_after_88290739_300.csv
+!artifacts/v5_candidate_matrix_after_88290739_60.csv
+!artifacts/v5_top10_after_88290739_300.csv
+!artifacts/haseeb_candidate_matrix_after_88290739_60.csv
+
+# Downloaded leaderboard snapshots
+pokemon-tcg-ai-battle-publicleaderboard-*.csv
+
+# Local logs and temporary files
+*.log
+*.tmp
+*.tar
+*.tar.gz
