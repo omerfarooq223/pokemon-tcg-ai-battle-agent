@@ -1,3 +1,11 @@
+"""V11 recency-weighted Crustle / Cornerstone resilience planner.
+
+The policy preserves the strongest live one-prize shell and makes backup-board
+development a first-class invariant.  Runtime decisions use only visible game
+state and card mechanics; no player names, replay IDs, or opponent identities
+are used.
+"""
+
 import os
 
 
@@ -148,6 +156,8 @@ DISRUPTION_CARDS = {1182, 1197}
 ENERGY_CARDS = set(ENERGY_CARD_TYPES)
 ABILITY_POKEMON = {96, 756, 1071, 140, 184, 272}
 BASIC_SETUP_POKEMON = {117, 344, 397, 796, 1073}
+CORE_BOARD_LINES = {117, 344, 345}
+POFFIN_ELIGIBLE_POKEMON = {344}
 
 # Pokémon whose attacks place or move damage counters, cause delayed effects,
 # or impose attack effects that Mist Energy can prevent. These profiles come
@@ -176,6 +186,21 @@ MIST_ACTIVE_THREATS = {
     1058,
 }
 
+# HP thresholds where specific attackers guarantee KO. Used to avoid
+# wasting setup turns when lethal damage is already achievable.
+# Crustle (117) Demolish: 140. Incineroar (797) Infernal Slash: 220.
+# Diggersby (1074) Earthquake: 140. Tsareena (398) Petal Blade Dance: 130.
+KO_HP_BY_ATTACKER = {
+    117: 140,
+    797: 220,
+    1074: 140,
+    398: 130,
+    345: 120,
+    756: 200,
+    184: 200,
+    63: 140,
+}
+
 
 def agent_path(filename):
     kaggle_path = os.path.join("/kaggle_simulations/agent", filename)
@@ -186,9 +211,39 @@ def agent_path(filename):
     return os.path.join(local_dir, filename)
 
 
+EXPECTED_DECK = [
+    344, 344, 344, 344, 345, 345, 345, 345, 117, 117, 1086, 1086,
+    1086, 1086, 1152, 1152, 1152, 1152, 1198, 1198, 1198, 1227,
+    1227, 1227, 1227, 1197, 1197, 1197, 1235, 1235, 1235, 1235,
+    1147, 1147, 1147, 1147, 1159, 18, 18, 18, 18, 11, 11, 11, 14,
+    14, 14, 6, 6, 6, 6, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+]
+
+
 def load_deck():
-    with open(agent_path("deck.csv"), encoding="utf-8-sig") as handle:
-        return [int(line.strip().split(",")[0]) for line in handle if line.strip()]
+    candidate_paths = [
+        os.path.join("/kaggle_simulations/agent", "deck.csv"),
+    ]
+    source_path = globals().get("__file__", "")
+    if source_path:
+        candidate_paths.append(
+            os.path.join(os.path.dirname(os.path.abspath(source_path)), "deck.csv")
+        )
+    candidate_paths.append(os.path.join(os.getcwd(), "deck.csv"))
+
+    for path in candidate_paths:
+        try:
+            with open(path, encoding="utf-8-sig") as handle:
+                deck = [
+                    int(line.strip().split(",")[0])
+                    for line in handle
+                    if line.strip()
+                ]
+        except (OSError, ValueError):
+            continue
+        if deck == EXPECTED_DECK:
+            return deck
+    return EXPECTED_DECK
 
 
 DECK = load_deck()
@@ -413,6 +468,44 @@ def opponent_ability_pressure(obs):
     return active_ability, any_ability
 
 
+def opponent_prize_count(obs):
+    """Return the opponent's remaining prizes from the simulator prize zone."""
+    state = current_state(obs)
+    opp = 1 - your_index(state)
+    ps = players(state)
+    if opp >= len(ps):
+        return 6
+    prize = ps[opp].get("prize")
+    if isinstance(prize, list):
+        return len(prize)
+    return as_int(ps[opp].get("prizeCount"), 6)
+
+
+def our_prize_count(obs):
+    """Return our remaining prizes from the simulator prize zone."""
+    state = current_state(obs)
+    yi = your_index(state)
+    ps = players(state)
+    if yi >= len(ps):
+        return 6
+    prize = ps[yi].get("prize")
+    if isinstance(prize, list):
+        return len(prize)
+    return as_int(ps[yi].get("prizeCount"), 6)
+
+
+def can_ko_active_opponent(obs, attacker_id):
+    """Return True if the named attacker can OHKO the current opponent active."""
+    state = current_state(obs)
+    opp = 1 - your_index(state)
+    target = active_card(state, opp)
+    if not isinstance(target, dict):
+        return False
+    hp = as_int(target.get("hp"), 0)
+    damage = KO_HP_BY_ATTACKER.get(attacker_id, 0)
+    return hp > 0 and damage >= hp
+
+
 def board_target_score(obs, target, extra_energy=None, source_energy_index=None):
     if not isinstance(target, dict):
         return 0.0
@@ -443,6 +536,15 @@ def board_target_score(obs, target, extra_energy=None, source_energy_index=None)
     elif target.get("id") == 1074 and not active_ex:
         score += 180.0
     score += POKEMON_ROLE.get(target.get("id"), 0.0)
+    # Late-game boost: push key attackers harder when prizes are low
+    opp_prizes = opponent_prize_count(obs)
+    our_prizes = our_prize_count(obs)
+    if opp_prizes <= 2 and target.get("id") in KO_HP_BY_ATTACKER:
+        score += 200.0
+    if our_prizes <= 2:
+        # We're close to winning; strongly prefer ready attackers
+        if r_after["ready"]:
+            score += 280.0
     return score
 
 
@@ -461,6 +563,98 @@ def hand_count(state, player):
     return as_int(ps[player].get("handCount"), len(card_list(state, player, 2, {})))
 
 
+def viable_line_count(state, player):
+    """Count established attackers or evolution lines still in play.
+
+    The current deck has two independent lines: Dwebble/Crustle and
+    Cornerstone.  A Dwebble counts because Ascension can establish Crustle;
+    evolved cards are counted once, through the in-play card rather than their
+    ``preEvolution`` history.
+    """
+    total = 0
+    for card in board_cards_only(state, player):
+        if card_id(card) not in CORE_BOARD_LINES:
+            continue
+        hp = as_int(card.get("hp"), as_int(card.get("maxHp"), 1))
+        if hp > 0:
+            total += 1
+    return total
+
+
+def visible_copy_count(state, player, wanted_id):
+    """Count known copies outside the hidden deck, including evolutions."""
+    ps = players(state)
+    if player < 0 or player >= len(ps):
+        return 0
+
+    seen = set()
+
+    def count_card(card):
+        if not isinstance(card, dict):
+            return 0
+        serial = card.get("serial")
+        key = (card.get("playerIndex", player), serial)
+        if serial is not None and key in seen:
+            return 0
+        if serial is not None:
+            seen.add(key)
+        count = 1 if card_id(card) == wanted_id else 0
+        for prior in card.get("preEvolution") or []:
+            count += count_card(prior)
+        return count
+
+    player_state = ps[player]
+    total = 0
+    for zone in ("active", "bench", "hand", "discard", "prize"):
+        for card in player_state.get(zone) or []:
+            total += count_card(card)
+    return total
+
+
+def poffin_progress_capacity(obs):
+    """Return a conservative upper bound on useful Poffin placements.
+
+    Live observations normally hide the remaining deck, so this function only
+    returns zero when lack of progress is provable: no Bench slot, an empty
+    deck, an explicitly visible deck with no eligible Basic, or every eligible
+    copy already accounted for outside the deck.
+    """
+    state = current_state(obs)
+    yi = your_index(state)
+    ps = players(state)
+    if yi >= len(ps):
+        return 0
+    player_state = ps[yi]
+    bench = player_state.get("bench") or []
+    bench_slots = max(0, as_int(player_state.get("benchMax"), 5) - len(bench))
+    deck_count = player_state.get("deckCount")
+    if bench_slots == 0 or (
+        deck_count is not None and as_int(deck_count, 0) == 0
+    ):
+        return 0
+
+    remaining_deck = player_state.get("deck")
+    if isinstance(remaining_deck, list) and remaining_deck:
+        eligible = sum(
+            1
+            for card in remaining_deck
+            if card_id(card if isinstance(card, dict) else {"id": card})
+            in POFFIN_ELIGIBLE_POKEMON
+        )
+        return min(2, bench_slots, eligible)
+
+    total_eligible = sum(
+        EXPECTED_DECK.count(candidate_id)
+        for candidate_id in POFFIN_ELIGIBLE_POKEMON
+    )
+    known_outside_deck = sum(
+        visible_copy_count(state, yi, candidate_id)
+        for candidate_id in POFFIN_ELIGIBLE_POKEMON
+    )
+    possible = max(0, total_eligible - known_outside_deck)
+    return min(2, bench_slots, possible)
+
+
 def score_play_from_hand(obs, option):
     state = current_state(obs)
     yi = your_index(state)
@@ -470,6 +664,21 @@ def score_play_from_hand(obs, option):
     score = BASE_TYPE_SCORE[7]
     if cid in DRAW_SEARCH_CARDS:
         score += 180.0
+    lines_needed = max(0, 2 - viable_line_count(state, yi))
+    if cid == 1086:
+        capacity = poffin_progress_capacity(obs)
+        if capacity <= 0:
+            return -5000.0
+        if viable_line_count(state, yi) >= 3:
+            # Three established lines survive one removal while avoiding the
+            # vulnerable five-Pokémon boards produced by unconditional Poffin.
+            return -5000.0
+        if lines_needed:
+            score += 520.0 * min(lines_needed, capacity)
+    elif cid == 1152 and lines_needed:
+        # Poké Pad can find the missing Dwebble without immediately flooding
+        # the Bench, so it is a safe second backup-search route.
+        score += 420.0
     if cid in DISRUPTION_CARDS:
         score += 70.0 + hp_pressure_bonus(obs, 90)
     opponent_hand = hand_count(state, 1 - yi)
@@ -498,10 +707,23 @@ def score_play_from_hand(obs, option):
             score -= 260.0
         else:
             score += POKEMON_ROLE[cid]
+            if cid == 344 and lines_needed:
+                # A guaranteed Basic already in hand is preferable to spending
+                # a search Item whose target may be hidden in the Prizes.
+                score += 900.0
             if cid == 756 and not any(card_id(c) == 756 for c in board_cards_only(state, yi)):
                 score += 90.0
     if as_int(state.get("supporterPlayed"), 0) and cid in {1182, 1197, 1198, 1205}:
         score -= 250.0
+    # Healing: strongly prefer when our active is low on HP
+    if cid in (1147, 1212):
+        active = active_card(state, yi)
+        if isinstance(active, dict):
+            missing_hp = as_int(active.get("maxHp"), 0) - as_int(active.get("hp"), 0)
+            if missing_hp >= 80:
+                score += 180.0
+            elif missing_hp >= 40:
+                score += 80.0
     return score
 
 
@@ -653,6 +875,10 @@ def score_attach_or_evolve(obs, option):
             score += 55.0
         if target and target.get("id") == 63 and cid in (4, 6):
             score += 45.0
+        # Extra urgency: attach to active when opponent can be KO'd next turn
+        if target_area == 4 and card_id(target) in KO_HP_BY_ATTACKER:
+            if can_ko_active_opponent(obs, card_id(target)):
+                score += 140.0
     elif cid in POKEMON_ROLE:
         score += POKEMON_ROLE[cid]
         if option.get("inPlayArea") == 4:
@@ -687,7 +913,113 @@ def score_board_action(obs, option):
             score += 280.0
         if cid in ABILITY_POKEMON:
             score += 70.0
+        # Prefer retreating to a KO-ready benched attacker when opponent is vulnerable
+        if option.get("area") == 4 and r["ready"] and can_ko_active_opponent(obs, cid):
+            score += 350.0
     return score
+
+
+def discard_preservation_score(obs, option):
+    """Return how costly it would be to discard this hand card.
+
+    Selection context 8 is used for discard choices (for example Xerosic's
+    Machinations, Hand Trimmer, and Ultra Ball's cost).  Older agents reused
+    ``card_pick_score`` here, which inverted the intent and discarded their
+    most useful cards first.  A lower preservation score is therefore better
+    when V9 must choose discards.
+
+    ``None`` means this is not a discard-from-our-hand option and the normal
+    target scorer should handle it.
+    """
+    state = current_state(obs)
+    select = select_state(obs)
+    yi = your_index(state)
+    if (
+        select.get("context") != 8
+        or option.get("playerIndex", yi) != yi
+        or option.get("area") != 2
+    ):
+        return None
+
+    card = option_card(obs, option)
+    cid = card_id(card)
+    hand = card_list(state, yi, 2, {})
+    hand_ids_now = [card_id(candidate) for candidate in hand]
+    hand_index = option.get("index")
+    if not isinstance(hand_index, int):
+        hand_index = 0
+    duplicate_rank = sum(
+        1
+        for candidate_id in hand_ids_now[:hand_index]
+        if candidate_id == cid
+    )
+
+    board = board_cards_only(state, yi)
+    board_ids = [card_id(candidate) for candidate in board]
+    has_unready_attacker = any(not readiness(candidate)["ready"] for candidate in board)
+    active = active_card(state, yi)
+    active_missing_hp = 0
+    if isinstance(active, dict):
+        active_missing_hp = max(
+            0,
+            as_int(active.get("maxHp"), 0) - as_int(active.get("hp"), 0),
+        )
+
+    # Start unknown cards slightly above zero so a known redundant copy is
+    # still preferred as a discard.  The first copy of a useful non-Energy
+    # card receives an additional keep premium below.
+    value = 50.0
+
+    if cid in POKEMON_ROLE:
+        value = 260.0 + POKEMON_ROLE.get(cid, 0.0)
+        if cid == 345:
+            # Preserve enough Crustle to evolve the Dwebble currently in play;
+            # surplus copies may be discarded before the required copies.
+            unevolved_lines = board_ids.count(344)
+            value += 620.0 if duplicate_rank < unevolved_lines else 120.0
+        elif cid == 344:
+            # A Basic backup is critical only when no Dwebble/Crustle line is
+            # already established; avoid protecting every redundant Basic.
+            value += 520.0 if not ({344, 345} & set(board_ids)) else 80.0
+        elif cid == 117:
+            active_ability, any_ability = opponent_ability_pressure(obs)
+            value += 420.0 if (active_ability or any_ability) else 100.0
+    elif cid in ENERGY_CARDS:
+        if has_unready_attacker:
+            fit = energy_board_fit_score(obs, cid)
+            value = 240.0 + max(0.0, fit) * 0.65
+        else:
+            value = 70.0
+        # Keep the first useful Energy copies, but shed excess duplicates
+        # before unique resources when disruption forces a large discard.
+        value -= duplicate_rank * 90.0
+    elif cid == 1197:
+        value = 650.0 if hand_count(state, 1 - yi) >= 5 else 70.0
+    elif cid == 1152:
+        needs_evolution = 344 in board_ids and 345 not in board_ids and 345 not in hand_ids_now
+        value = 650.0 if needs_evolution else 150.0
+    elif cid == 1086:
+        value = 500.0 if len(board) < 3 else 80.0
+    elif cid in {1198, 1235}:
+        value = 520.0 if has_unready_attacker else 90.0
+    elif cid == 1227:
+        # Draw recovery is especially valuable after the hand is cut to three.
+        value = 520.0
+    elif cid in {1147, 1212}:
+        value = 480.0 if active_missing_hp >= 50 else 70.0
+    elif cid == 1159:
+        value = 600.0
+    elif cid in DRAW_SEARCH_CARDS:
+        value = 360.0
+    elif cid in DISRUPTION_CARDS:
+        value = 260.0
+
+    if cid not in ENERGY_CARDS:
+        if duplicate_rank == 0:
+            value += 160.0
+        else:
+            value -= duplicate_rank * 100.0
+    return value
 
 
 def score_target_selection(obs, option):
@@ -700,6 +1032,11 @@ def score_target_selection(obs, option):
     cid = card_id(card)
     area = option.get("area")
     score = BASE_TYPE_SCORE[3]
+
+    preservation = discard_preservation_score(obs, option)
+    if preservation is not None:
+        # Options are ranked high-to-low, so invert keep value for a discard.
+        return score - preservation
 
     effect_id = card_id(select.get("effect"))
     if (
@@ -741,6 +1078,19 @@ def score_target_selection(obs, option):
         if context in (4, 43):
             score += 260.0 if readiness(card)["ready"] else 0.0
             score += 120.0 if area == 5 else 0.0
+            opponent = active_card(state, 1 - yi)
+            opponent_hp = (
+                as_int(opponent.get("hp"), 0) if isinstance(opponent, dict) else 0
+            )
+            # Crustle range: 140 damage, so any HP <= 140 is lethal.
+            if cid == 117 and readiness(card)["ready"] and 0 < opponent_hp <= 140:
+                score += 520.0
+            # Incineroar: 220 damage, lethal up to 220 hp.
+            if cid == 797 and readiness(card)["ready"] and 0 < opponent_hp <= 220:
+                score += 480.0
+            # Diggersby: 140 damage.
+            if cid == 1074 and readiness(card)["ready"] and 0 < opponent_hp <= 140:
+                score += 460.0
     elif owner != yi and area in (4, 5):
         score += 130.0
         if isinstance(card, dict):
@@ -749,6 +1099,12 @@ def score_target_selection(obs, option):
             score += len(card.get("energies") or []) * 45.0
             if area == 4:
                 score += 85.0
+            # Strongly prefer already-damaged opponent targets (closer to KO)
+            opp_cid = card_id(card)
+            opp_hp = as_int(card.get("hp"), 0)
+            opp_max_hp = as_int(card.get("maxHp"), 0)
+            if opp_max_hp and opp_hp <= opp_max_hp * 0.4:
+                score += 200.0
     elif area in (1, 2, 12, 3):
         score += card_pick_score(obs, cid, area, context)
     return score
@@ -781,6 +1137,33 @@ def card_pick_score(obs, cid, area, context):
             score -= 35.0
     if area == 3 and cid in ENERGY_CARDS:
         score += 80.0
+    hand = hand_ids(state, yi)
+    effect_id = card_id(select_state(obs).get("effect"))
+    hand_has_backup = any(card in BASIC_SETUP_POKEMON for card in hand)
+    lines_needed = max(0, 2 - viable_line_count(state, yi))
+    if effect_id == 1152 and area == 1 and lines_needed:
+        if cid == 344:
+            # Poké Pad's bounded resilience job is to restore a missing Basic
+            # line.  Once Dwebble is already in hand, the ordinary evolution
+            # score below can prefer Crustle instead.
+            score += 560.0 if 344 not in hand else 120.0
+        elif cid == 345 and 344 in hand and 345 not in hand:
+            score += 300.0
+    if (
+        effect_id == 1152
+        and area == 1
+        and cid in BASIC_SETUP_POKEMON
+        and len(board_cards(state, yi)) == 1
+        and 345 in hand
+        and not hand_has_backup
+    ):
+        score += 240.0
+    # When Poké Ball (1086) or similar search effects look for Basics, prefer
+    # the strongest attacker that is missing only one energy step.
+    if effect_id in (1086, 1152) and area == 1 and cid in POKEMON_ROLE:
+        board_ids = {card_id(c) for c in board_cards_only(state, yi)}
+        if cid not in board_ids:
+            score += 60.0
     return score
 
 
@@ -811,6 +1194,18 @@ def score_attack(obs, option):
     attack_id = option.get("attackId")
     damage = ATTACK_DAMAGE_BY_ID.get(as_int(attack_id, -1), r["damage"])
     score = BASE_TYPE_SCORE[13] + damage * 1.8 + hp_pressure_bonus(obs, damage)
+    # Prize pressure: prefer attacking over setup when prizes are low on either side
+    opp_prizes = opponent_prize_count(obs)
+    our_prizes = our_prize_count(obs)
+    if opp_prizes <= 2 or our_prizes <= 2:
+        score += 300.0
+    # Bonus for attacks that can KO the active opponent
+    opp = 1 - yi
+    opp_active = active_card(state, opp)
+    if isinstance(opp_active, dict):
+        opp_hp = as_int(opp_active.get("hp"), 0)
+        if opp_hp and damage >= opp_hp:
+            score += 500.0
     return score
 
 
@@ -916,6 +1311,12 @@ def bounded_setup_choice(obs, ranked):
     if ATTACK_DEFERRALS.get(turn_key, 0) >= MAX_ATTACK_DEFERRALS:
         return None
 
+    # Never defer setup when we are at prize parity ≤ 1 and can attack now
+    opp_prizes = opponent_prize_count(obs)
+    our_prizes = our_prize_count(obs)
+    if opp_prizes <= 1 or our_prizes <= 1:
+        return None
+
     options = select_state(obs).get("option") or []
     active = active_card(state, yi)
     active_missing_hp = 0
@@ -932,13 +1333,24 @@ def bounded_setup_choice(obs, ranked):
         choices = [(score, index) for score, index in ranked if predicate(index)]
         return choices[0][1] if choices else None
 
-    board_size = len(board_cards(state, yi))
+    lines_needed = max(0, 2 - viable_line_count(state, yi))
     choice = None
-    if board_size == 1:
+    if lines_needed:
         choice = best_index(
             lambda index: options[index].get("type") == 7
-            and play_id(index) == 1086
+            and play_id(index) == 344
         )
+        if choice is None:
+            choice = best_index(
+                lambda index: options[index].get("type") == 7
+                and play_id(index) == 1086
+                and poffin_progress_capacity(obs) > 0
+            )
+        if choice is None:
+            choice = best_index(
+                lambda index: options[index].get("type") == 7
+                and play_id(index) == 1152
+            )
         if choice is None:
             choice = best_index(
                 lambda index: options[index].get("type") == 7
@@ -1043,6 +1455,17 @@ def choose_action(obs):
         ((score_option(obs, option), index) for index, option in enumerate(options)),
         key=lambda item: (-item[0], item[1]),
     )
+
+    if card_id(select.get("effect")) == 1086:
+        # Buddy-Buddy Poffin says "up to 2".  Stop at three established lines:
+        # enough to retain a backup after one removal, without filling every
+        # open Bench slot.
+        state = current_state(obs)
+        line_capacity = max(0, 3 - viable_line_count(state, your_index(state)))
+        take = min(max_count, line_capacity)
+        if take < min_count:
+            take = min_count
+        return [index for score, index in ranked if score > 0][:take]
 
     attack_choices = [
         (score, index)

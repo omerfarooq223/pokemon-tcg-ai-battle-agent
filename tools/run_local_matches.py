@@ -28,7 +28,11 @@ def load_agent(agent_dir: Path, module_name: str):
 
 
 def read_deck(path: Path) -> list[int]:
-    deck = [int(line.strip()) for line in path.read_text().splitlines() if line.strip()]
+    deck = [
+        int(line.strip().split(",")[0])
+        for line in path.read_text(encoding="utf-8-sig").splitlines()
+        if line.strip()
+    ]
     if len(deck) != 60:
         raise ValueError(f"{path} contains {len(deck)} cards; expected 60")
     return deck
@@ -93,6 +97,10 @@ def main() -> None:
     )
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args()
+    if args.matches < 1:
+        parser.error("--matches must be positive")
+    if args.max_decisions < 1:
+        parser.error("--max-decisions must be positive")
 
     agent_dir = args.agent_dir.resolve()
     agent = load_agent(agent_dir, "primary_agent")
@@ -111,7 +119,10 @@ def main() -> None:
             (args.opponent_deck or opponent_dir / "deck.csv").resolve()
         )
     else:
-        opponent = agent
+        # Load an independent module instance. Several policies keep bounded
+        # per-game memory; sharing one module between both seats corrupts a
+        # nominal self-play comparison.
+        opponent = load_agent(agent_dir, "self_opponent_agent")
         opponent_deck = deck
     primary_wins = 0
     opponent_wins = 0

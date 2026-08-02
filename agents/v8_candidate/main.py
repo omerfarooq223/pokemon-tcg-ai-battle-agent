@@ -186,9 +186,39 @@ def agent_path(filename):
     return os.path.join(local_dir, filename)
 
 
+EXPECTED_DECK = [
+    344, 344, 344, 344, 345, 345, 345, 345, 117, 117, 1086, 1086,
+    1086, 1086, 1152, 1152, 1152, 1152, 1198, 1198, 1198, 1227,
+    1227, 1227, 1227, 1197, 1197, 1212, 1235, 1235, 1235, 1235,
+    1147, 1147, 1147, 1147, 1159, 18, 18, 18, 18, 11, 11, 11, 14,
+    14, 14, 6, 6, 6, 6, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+]
+
+
 def load_deck():
-    with open(agent_path("deck.csv"), encoding="utf-8-sig") as handle:
-        return [int(line.strip().split(",")[0]) for line in handle if line.strip()]
+    candidate_paths = [
+        os.path.join("/kaggle_simulations/agent", "deck.csv"),
+    ]
+    source_path = globals().get("__file__", "")
+    if source_path:
+        candidate_paths.append(
+            os.path.join(os.path.dirname(os.path.abspath(source_path)), "deck.csv")
+        )
+    candidate_paths.append(os.path.join(os.getcwd(), "deck.csv"))
+
+    for path in candidate_paths:
+        try:
+            with open(path, encoding="utf-8-sig") as handle:
+                deck = [
+                    int(line.strip().split(",")[0])
+                    for line in handle
+                    if line.strip()
+                ]
+        except (OSError, ValueError):
+            continue
+        if deck == EXPECTED_DECK:
+            return deck
+    return EXPECTED_DECK
 
 
 DECK = load_deck()

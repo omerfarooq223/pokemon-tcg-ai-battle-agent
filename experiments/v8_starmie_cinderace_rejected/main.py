@@ -28,6 +28,7 @@ ENERGY_CARD_TYPES = {
     11: "C",
     14: "C",
     15: "RKT",
+    17: "C",
     18: "G",
 }
 
@@ -49,62 +50,24 @@ ATTACHED_ENERGY_TYPES = {
 # Cost symbols use C for colorless. The profiles are intentionally compact and cover
 # our deck's attackers; unknown Pokemon fall back to simple attached-energy scoring.
 ATTACKS = {
-    117: [{"cost": ["F", "C", "C"], "damage": 140, "name": "Demolish"}],
-    344: [{"cost": ["C"], "damage": 0, "name": "Ascension"}],
-    345: [{"cost": ["G", "C", "C"], "damage": 120, "name": "Superb Scissors"}],
-    397: [{"cost": ["G"], "damage": 20, "name": "Cut Up"}],
-    398: [{"cost": ["G"], "damage": 130, "name": "Petal Blade Dance"}],
-    796: [{"cost": ["R"], "damage": 10, "name": "Chop"}],
-    797: [{"cost": ["R"], "damage": 220, "name": "Infernal Slash"}],
-    1073: [{"cost": ["C"], "damage": 10, "name": "Smash Kick"}],
-    1074: [{"cost": ["C"], "damage": 140, "name": "Earthquake"}],
-    756: [{"cost": ["C", "C", "C"], "damage": 200, "name": "Rapid-Fire Combo"}],
-    1071: [{"cost": ["C", "C", "C"], "damage": 60, "name": "Tuck Tail"}],
-    96: [{"cost": ["G", "G", "G"], "damage": 90, "name": "Myriad Leaf Shower"}],
-    108: [{"cost": ["W", "C", "C"], "damage": 100, "name": "Torrential Pump"}],
-    63: [{"cost": ["L", "F"], "damage": 140, "name": "Bellowing Thunder"}],
-    184: [{"cost": ["P", "P", "C"], "damage": 200, "name": "Eon Blade"}],
-    140: [{"cost": ["C", "C", "C"], "damage": 90, "name": "Cruel Arrow"}],
-    272: [{"cost": ["P", "C"], "damage": 80, "name": "Full Moon Rondo"}],
-    978: [{"cost": ["F", "C"], "damage": 80, "name": "Coordinated Throwing"}],
+    666: [{"cost": ["C"], "damage": 50, "name": "Turbo Flare"}],
+    1030: [{"cost": ["W"], "damage": 20, "name": "Water Gun"}],
+    1031: [
+        {"cost": ["W"], "damage": 120, "name": "Jetting Blow"},
+        {"cost": ["C", "C", "C"], "damage": 210, "name": "Nebula Beam"},
+    ],
 }
 
 ATTACK_DAMAGE_BY_ID = {
-    71: 0,
-    72: 140,
-    120: 90,
-    135: 20,
-    136: 100,
-    148: 140,
-    183: 100,
-    371: 80,
-    478: 0,
-    479: 120,
-    1092: 200,
-    1407: 80,
-    1550: 140,
-    1551: 100,
+    1486: 20,
+    1487: 120,
+    1488: 210,
 }
 
 POKEMON_ROLE = {
-    117: 170.0,
-    797: 165.0,
-    1074: 155.0,
-    398: 145.0,
-    345: 125.0,
-    756: 120.0,
-    96: 105.0,
-    184: 90.0,
-    63: 88.0,
-    108: 75.0,
-    140: 65.0,
-    1071: 60.0,
-    272: 50.0,
-    978: 45.0,
-    344: 42.0,
-    796: 40.0,
-    1073: 40.0,
-    397: 38.0,
+    1031: 420.0,
+    1030: 300.0,
+    666: 230.0,
 }
 
 # Card metadata is not included in each observation.  This compact ID set lets the
@@ -143,11 +106,12 @@ ABILITY_POKEMON_IDS = {
     1040, 1045, 1052, 1054, 1059, 1071, 1099, 1136, 1138, 1150, 1151,
 }
 
-DRAW_SEARCH_CARDS = {1088, 1097, 1098, 1121, 1152, 1198, 1205, 1250}
-DISRUPTION_CARDS = {1182, 1197}
+DRAW_SEARCH_CARDS = {1086, 1097, 1121, 1122, 1145, 1189, 1225, 1227}
+DISRUPTION_CARDS = {1120, 1182, 1223}
+SUPPORTER_CARDS = {1182, 1189, 1223, 1225, 1227, 1229}
 ENERGY_CARDS = set(ENERGY_CARD_TYPES)
-ABILITY_POKEMON = {96, 756, 1071, 140, 184, 272}
-BASIC_SETUP_POKEMON = {117, 344, 397, 796, 1073}
+ABILITY_POKEMON = {666}
+BASIC_SETUP_POKEMON = {666, 1030}
 
 # Pokémon whose attacks place or move damage counters, cause delayed effects,
 # or impose attack effects that Mist Energy can prevent. These profiles come
@@ -176,6 +140,12 @@ MIST_ACTIVE_THREATS = {
     1058,
 }
 
+# HP thresholds where specific attackers guarantee KO. Used to avoid
+# wasting setup turns when lethal damage is already achievable.
+# Crustle (117) Demolish: 140. Incineroar (797) Infernal Slash: 220.
+# Diggersby (1074) Earthquake: 140. Tsareena (398) Petal Blade Dance: 130.
+KO_HP_BY_ATTACKER = {666: 50, 1030: 20, 1031: 210}
+
 
 def agent_path(filename):
     kaggle_path = os.path.join("/kaggle_simulations/agent", filename)
@@ -186,9 +156,39 @@ def agent_path(filename):
     return os.path.join(local_dir, filename)
 
 
+EXPECTED_DECK = [
+    666, 666, 666, 666, 1030, 1030, 1030, 1031, 1031, 1031, 1086,
+    1086, 1086, 1086, 1097, 1097, 1120, 1120, 1120, 1120, 1121, 1122,
+    1122, 1122, 1122, 1145, 1145, 1145, 1145, 1159, 1182, 1189, 1189,
+    1189, 1189, 1223, 1223, 1225, 1225, 1227, 1227, 1227, 1227, 1229,
+    1229, 1229, 1229, 17, 17, 17, 17, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+]
+
+
 def load_deck():
-    with open(agent_path("deck.csv"), encoding="utf-8-sig") as handle:
-        return [int(line.strip().split(",")[0]) for line in handle if line.strip()]
+    candidate_paths = [
+        os.path.join("/kaggle_simulations/agent", "deck.csv"),
+    ]
+    source_path = globals().get("__file__", "")
+    if source_path:
+        candidate_paths.append(
+            os.path.join(os.path.dirname(os.path.abspath(source_path)), "deck.csv")
+        )
+    candidate_paths.append(os.path.join(os.getcwd(), "deck.csv"))
+
+    for path in candidate_paths:
+        try:
+            with open(path, encoding="utf-8-sig") as handle:
+                deck = [
+                    int(line.strip().split(",")[0])
+                    for line in handle
+                    if line.strip()
+                ]
+        except (OSError, ValueError):
+            continue
+        if deck == EXPECTED_DECK:
+            return deck
+    return EXPECTED_DECK
 
 
 DECK = load_deck()
@@ -285,6 +285,9 @@ def attached_types(card):
         symbol = ATTACHED_ENERGY_TYPES.get(energy_id)
         if symbol:
             result.append(symbol)
+    for energy_card in card.get("energyCards") or []:
+        if card_id(energy_card) == 17:
+            result.extend(("C", "C"))
     return result
 
 
@@ -316,6 +319,8 @@ def readiness(card, extra_energy=None, remove_energy_index=None):
         energy_types = energy_types[:remove_energy_index] + energy_types[remove_energy_index + 1 :]
     if extra_energy in ENERGY_CARD_TYPES:
         energy_types.append(ENERGY_CARD_TYPES[extra_energy])
+        if extra_energy == 17:
+            energy_types.extend(("C", "C"))
         if extra_energy == 15:
             energy_types.append("RKT")
 
@@ -413,6 +418,38 @@ def opponent_ability_pressure(obs):
     return active_ability, any_ability
 
 
+def opponent_prize_count(obs):
+    """Estimate opponent remaining prizes from deck state."""
+    state = current_state(obs)
+    opp = 1 - your_index(state)
+    ps = players(state)
+    if opp >= len(ps):
+        return 6
+    return as_int(ps[opp].get("prizeCount"), 6)
+
+
+def our_prize_count(obs):
+    """Our remaining prizes."""
+    state = current_state(obs)
+    yi = your_index(state)
+    ps = players(state)
+    if yi >= len(ps):
+        return 6
+    return as_int(ps[yi].get("prizeCount"), 6)
+
+
+def can_ko_active_opponent(obs, attacker_id):
+    """Return True if the named attacker can OHKO the current opponent active."""
+    state = current_state(obs)
+    opp = 1 - your_index(state)
+    target = active_card(state, opp)
+    if not isinstance(target, dict):
+        return False
+    hp = as_int(target.get("hp"), 0)
+    damage = KO_HP_BY_ATTACKER.get(attacker_id, 0)
+    return hp > 0 and damage >= hp
+
+
 def board_target_score(obs, target, extra_energy=None, source_energy_index=None):
     if not isinstance(target, dict):
         return 0.0
@@ -432,17 +469,29 @@ def board_target_score(obs, target, extra_energy=None, source_energy_index=None)
         active = active_card(state, yi)
         if not isinstance(active, dict) or not readiness(active)["ready"]:
             score += 45.0
-    active_ex, any_ex = opponent_ex_pressure(obs)
-    active_ability, any_ability = opponent_ability_pressure(obs)
-    if target.get("id") == 345:
-        score += 360.0 if active_ex else (150.0 if any_ex else 0.0)
-    elif target.get("id") == 344:
-        score += 140.0 if any_ex else 0.0
-    elif target.get("id") == 117:
-        score += 440.0 if active_ability else (100.0 if any_ability else -120.0)
-    elif target.get("id") == 1074 and not active_ex:
+    target_id = target.get("id")
+    if target_id == 1031:
+        score += 420.0
+        if r_after["damage"] >= 210 and r_after["ready"]:
+            score += 260.0
+    elif target_id == 1030:
         score += 180.0
+        if 1031 in hand_ids(state, yi):
+            score += 160.0
+    elif target_id == 666:
+        score += 120.0
+        if target in card_list(state, yi, 4, {}):
+            score += 160.0
     score += POKEMON_ROLE.get(target.get("id"), 0.0)
+    # Late-game boost: push key attackers harder when prizes are low
+    opp_prizes = opponent_prize_count(obs)
+    our_prizes = our_prize_count(obs)
+    if opp_prizes <= 2 and target.get("id") in KO_HP_BY_ATTACKER:
+        score += 200.0
+    if our_prizes <= 2:
+        # We're close to winning; strongly prefer ready attackers
+        if r_after["ready"]:
+            score += 280.0
     return score
 
 
@@ -472,26 +521,31 @@ def score_play_from_hand(obs, option):
         score += 180.0
     if cid in DISRUPTION_CARDS:
         score += 70.0 + hp_pressure_bonus(obs, 90)
-    opponent_hand = hand_count(state, 1 - yi)
-    if cid == 1197:
-        if opponent_hand <= 3:
-            return -850.0
-        score += (opponent_hand - 3) * 175.0
-        if opponent_hand >= 8:
-            score += 420.0
-    if cid == 1198:
+    board_ids = {card_id(card) for card in board_cards_only(state, yi)}
+    hand_size = len(hand)
+    if cid == 1145:
+        score += 500.0 if 1031 not in hand_ids(state, yi) else 80.0
+    elif cid == 1189:
+        score += 620.0 if 1030 in board_ids and 1031 not in board_ids else -180.0
+    elif cid == 1225:
+        score += 380.0 if 1031 not in hand_ids(state, yi) else 150.0
+    elif cid == 1227:
+        score += max(0, 7 - hand_size) * 95.0
+    elif cid == 1229:
+        active = active_card(state, yi)
+        missing_hp = (
+            as_int(active.get("maxHp"), 0) - as_int(active.get("hp"), 0)
+            if isinstance(active, dict) and card_id(active) == 1031
+            else 0
+        )
+        if missing_hp <= 0:
+            return -900.0
+        score += missing_hp * 4.0
+    elif cid == 1223:
+        opponent_hand = hand_count(state, 1 - yi)
+        score += max(0, opponent_hand - hand_size) * 55.0
+    elif cid == 1120:
         score += 120.0
-        if any(card_id(card) in ENERGY_CARDS for card in hand):
-            score += 80.0
-    if cid == 1116:
-        score += 100.0
-        best = best_board_readiness(state, yi)
-        if best and not best[4]["ready"]:
-            score += 110.0
-    if cid == 1098:
-        score += 120.0
-    if cid == 1088:
-        score += 160.0
     if cid in POKEMON_ROLE:
         bench = card_list(state, yi, 5, {})
         if len(bench) >= 8:
@@ -500,8 +554,17 @@ def score_play_from_hand(obs, option):
             score += POKEMON_ROLE[cid]
             if cid == 756 and not any(card_id(c) == 756 for c in board_cards_only(state, yi)):
                 score += 90.0
-    if as_int(state.get("supporterPlayed"), 0) and cid in {1182, 1197, 1198, 1205}:
-        score -= 250.0
+    if as_int(state.get("supporterPlayed"), 0) and cid in SUPPORTER_CARDS:
+        score -= 1200.0
+    # Healing: strongly prefer when our active is low on HP
+    if cid in (1147, 1212):
+        active = active_card(state, yi)
+        if isinstance(active, dict):
+            missing_hp = as_int(active.get("maxHp"), 0) - as_int(active.get("hp"), 0)
+            if missing_hp >= 80:
+                score += 180.0
+            elif missing_hp >= 40:
+                score += 80.0
     return score
 
 
@@ -516,47 +579,18 @@ def energy_fit_bonus(target, energy_id):
     energy_type = ENERGY_CARD_TYPES[energy_id]
     attached = attached_types(target)
 
-    if target_id == 96:
-        return 130.0 if energy_type == "G" else -320.0
-    if target_id == 117:
-        if energy_type == "F":
-            return 170.0 if "F" not in attached else 20.0
-        return -260.0 if "F" not in attached else 45.0
-    if target_id == 63:
-        if energy_type not in ("L", "F"):
-            return -300.0
-        return 140.0 if energy_type not in attached else 30.0
-    if target_id == 184:
-        psychic_count = attached.count("P")
-        if energy_type == "P":
-            return 135.0 if psychic_count < 2 else 30.0
-        return -240.0 if psychic_count < 2 else 15.0
-    if target_id == 108:
+    if target_id in (1030, 1031):
+        if energy_id == 17:
+            return 520.0 if target_id == 1031 else 120.0
         if energy_type == "W":
-            return 130.0 if "W" not in attached else 25.0
-        return -220.0 if "W" not in attached else 20.0
-    if target_id == 978:
-        if energy_type == "F":
-            return 125.0 if "F" not in attached else 20.0
-        return -210.0 if "F" not in attached else 15.0
-    if target_id == 272:
-        if energy_type == "P":
-            return 110.0 if "P" not in attached else 25.0
-        return -170.0 if "P" not in attached else 10.0
-    if target_id == 345:
-        if energy_type == "G":
-            return 135.0 if "G" not in attached else 30.0
-        return -180.0 if "G" not in attached else 5.0
-    if target_id == 344:
-        return 110.0 if energy_type == "G" else 45.0
-    if target_id in (397, 398):
-        return 145.0 if energy_type == "G" and not attached else 15.0
-    if target_id in (796, 797):
-        return 145.0 if energy_type == "R" and not attached else -180.0
-    if target_id in (1073, 1074):
-        return 150.0 if not attached else -80.0
-    if target_id in (756, 1071, 140):
-        return 55.0
+            if "W" not in attached:
+                return 260.0
+            return 90.0 if len(attached) < 3 else -80.0
+        return -260.0
+    if target_id == 666:
+        if energy_id == 17:
+            return 80.0
+        return 180.0 if not attached else -90.0
     return 0.0
 
 
@@ -620,39 +654,17 @@ def score_attach_or_evolve(obs, option):
             score -= 120.0
         score += board_target_score(obs, target, extra_energy=cid)
         score += energy_fit_bonus(target, cid)
-        if cid == 18 and card_id(target) in {344, 345}:
-            # Grow Grass pays the line's Grass requirement and preserves its
-            # +20 HP when Dwebble evolves into Crustle.
-            score += 220.0
-        state = current_state(obs)
-        opp = 1 - your_index(state)
-        opponent_id = card_id(active_card(state, opp))
         target_area = option.get("inPlayArea")
-        colored_paid = colored_requirements_paid(target)
-        if (
-            cid == 11
-            and target_area == 4
-            and colored_paid
-            and opponent_id in MIST_ACTIVE_THREATS
-        ):
-            score += 1050.0
-        elif (
-            cid == 14
-            and target_area == 4
-            and colored_paid
-            and opponent_id not in MIST_ACTIVE_THREATS
-        ):
-            score += 190.0
-        if target and target.get("id") == 756:
-            score += 75.0
-        if target and target.get("id") == 96 and cid == 1:
-            score += 55.0
-        if target and target.get("id") == 184 and cid == 5:
-            score += 55.0
-        if target and target.get("id") == 108 and cid == 3:
-            score += 55.0
-        if target and target.get("id") == 63 and cid in (4, 6):
-            score += 45.0
+        if card_id(target) == 1031 and cid == 17:
+            score += 900.0 if target_area == 4 else 520.0
+        elif card_id(target) in (1030, 1031) and cid == 3:
+            score += 260.0
+        elif card_id(target) == 666 and cid == 3:
+            score += 160.0
+        # Extra urgency: attach to active when opponent can be KO'd next turn
+        if target_area == 4 and card_id(target) in KO_HP_BY_ATTACKER:
+            if can_ko_active_opponent(obs, card_id(target)):
+                score += 140.0
     elif cid in POKEMON_ROLE:
         score += POKEMON_ROLE[cid]
         if option.get("inPlayArea") == 4:
@@ -683,10 +695,11 @@ def score_board_action(obs, option):
             score += 160.0
         elif r["missing"] == 1:
             score += 120.0
-        if cid == 96 and 1 in hand_ids(state, yi):
-            score += 280.0
         if cid in ABILITY_POKEMON:
             score += 70.0
+        # Prefer retreating to a KO-ready benched attacker when opponent is vulnerable
+        if option.get("area") == 4 and r["ready"] and can_ko_active_opponent(obs, cid):
+            score += 350.0
     return score
 
 
@@ -702,6 +715,15 @@ def score_target_selection(obs, option):
     score = BASE_TYPE_SCORE[3]
 
     effect_id = card_id(select.get("effect"))
+    if context == 7 and effect_id == 1121 and area == 2:
+        discard_value = 0.0
+        if cid in POKEMON_ROLE:
+            discard_value += POKEMON_ROLE[cid]
+        if cid in ENERGY_CARDS:
+            discard_value += 130.0
+        if cid in DRAW_SEARCH_CARDS:
+            discard_value += 60.0
+        return -discard_value
     if (
         context == 7
         and effect_id == 1198
@@ -741,6 +763,26 @@ def score_target_selection(obs, option):
         if context in (4, 43):
             score += 260.0 if readiness(card)["ready"] else 0.0
             score += 120.0 if area == 5 else 0.0
+            opponent = active_card(state, 1 - yi)
+            opponent_hp = (
+                as_int(opponent.get("hp"), 0) if isinstance(opponent, dict) else 0
+            )
+            if cid == 1031 and readiness(card)["ready"] and 0 < opponent_hp <= 210:
+                score += 560.0
+            elif cid == 1030 and readiness(card)["ready"] and 0 < opponent_hp <= 20:
+                score += 360.0
+            elif cid == 666 and readiness(card)["ready"] and 0 < opponent_hp <= 50:
+                score += 420.0
+        if effect_id == 1229:
+            missing_hp = max(
+                0,
+                as_int(card.get("maxHp"), 0) - as_int(card.get("hp"), 0),
+            )
+            if cid != 1031 or missing_hp <= 0:
+                return -1200.0
+            score += missing_hp * 6.0
+            if area == 4:
+                score += 320.0
     elif owner != yi and area in (4, 5):
         score += 130.0
         if isinstance(card, dict):
@@ -749,6 +791,14 @@ def score_target_selection(obs, option):
             score += len(card.get("energies") or []) * 45.0
             if area == 4:
                 score += 85.0
+            if area == 5 and 0 < as_int(card.get("hp"), 0) <= 50:
+                score += 700.0
+            # Strongly prefer already-damaged opponent targets (closer to KO)
+            opp_cid = card_id(card)
+            opp_hp = as_int(card.get("hp"), 0)
+            opp_max_hp = as_int(card.get("maxHp"), 0)
+            if opp_max_hp and opp_hp <= opp_max_hp * 0.4:
+                score += 200.0
     elif area in (1, 2, 12, 3):
         score += card_pick_score(obs, cid, area, context)
     return score
@@ -781,6 +831,37 @@ def card_pick_score(obs, cid, area, context):
             score -= 35.0
     if area == 3 and cid in ENERGY_CARDS:
         score += 80.0
+    hand = hand_ids(state, yi)
+    effect_id = card_id(select_state(obs).get("effect"))
+    if effect_id in {1145, 1189, 1225} and cid == 1031:
+        score += 720.0
+    if effect_id == 1086 and cid == 1030:
+        board_ids = {card_id(card) for card in board_cards_only(state, yi)}
+        score += 520.0 if 1030 not in board_ids else 180.0
+    if effect_id == 1097:
+        if cid == 1031:
+            score += 420.0
+        elif cid == 1030:
+            score += 280.0
+        elif cid == 3:
+            score += 120.0
+    if effect_id == 666 and cid == 3:
+        score += 650.0
+    hand_has_backup = any(card in BASIC_SETUP_POKEMON for card in hand)
+    if (
+        effect_id == 1086
+        and area == 1
+        and cid == 1030
+        and len(board_cards(state, yi)) == 1
+        and not hand_has_backup
+    ):
+        score += 300.0
+    # When Poké Ball (1086) or similar search effects look for Basics, prefer
+    # the strongest attacker that is missing only one energy step.
+    if effect_id in (1086, 1152) and area == 1 and cid in POKEMON_ROLE:
+        board_ids = {card_id(c) for c in board_cards_only(state, yi)}
+        if cid not in board_ids:
+            score += 60.0
     return score
 
 
@@ -793,6 +874,14 @@ def score_energy_source(obs, option):
     energy_index = option.get("energyIndex")
     before = readiness(card)
     after = readiness(card, remove_energy_index=energy_index)
+    owner = option.get("playerIndex", card.get("playerIndex", yi))
+    if owner != yi:
+        score = BASE_TYPE_SCORE[5] + (before["score"] - after["score"]) * 1.8
+        if card in card_list(state, 1 - yi, 4, {}):
+            score += 180.0
+        if before["ready"] and not after["ready"]:
+            score += 420.0
+        return score
     score = BASE_TYPE_SCORE[5] + (after["score"] - before["score"]) * 1.4
     if before["ready"] and not after["ready"]:
         score -= 320.0
@@ -811,6 +900,35 @@ def score_attack(obs, option):
     attack_id = option.get("attackId")
     damage = ATTACK_DAMAGE_BY_ID.get(as_int(attack_id, -1), r["damage"])
     score = BASE_TYPE_SCORE[13] + damage * 1.8 + hp_pressure_bonus(obs, damage)
+    # Prize pressure: prefer attacking over setup when prizes are low on either side
+    opp_prizes = opponent_prize_count(obs)
+    our_prizes = our_prize_count(obs)
+    if opp_prizes <= 2 or our_prizes <= 2:
+        score += 300.0
+    # Bonus for attacks that can KO the active opponent
+    opp = 1 - yi
+    opp_active = active_card(state, opp)
+    if isinstance(opp_active, dict):
+        opp_hp = as_int(opp_active.get("hp"), 0)
+        if opp_hp and damage >= opp_hp:
+            score += 500.0
+    active_id = card_id(active)
+    if active_id == 1031 and as_int(attack_id, -1) == 1487:
+        for opponent in card_list(state, 1 - yi, 5, {}):
+            hp = as_int(opponent.get("hp"), 0) if isinstance(opponent, dict) else 0
+            if 0 < hp <= 50:
+                score += 620.0
+            elif 0 < hp <= 100:
+                score += 140.0
+    elif active_id == 666:
+        for _, area, _, teammate in board_cards(state, yi):
+            if area == 5 and card_id(teammate) in (1030, 1031):
+                before = readiness(teammate)
+                after = readiness(teammate, extra_energy=3)
+                if not before["ready"] and after["ready"]:
+                    score += 500.0
+                elif not before["ready"]:
+                    score += 180.0
     return score
 
 
@@ -916,6 +1034,12 @@ def bounded_setup_choice(obs, ranked):
     if ATTACK_DEFERRALS.get(turn_key, 0) >= MAX_ATTACK_DEFERRALS:
         return None
 
+    # Never defer setup when we are at prize parity ≤ 1 and can attack now
+    opp_prizes = opponent_prize_count(obs)
+    our_prizes = our_prize_count(obs)
+    if opp_prizes <= 1 or our_prizes <= 1:
+        return None
+
     options = select_state(obs).get("option") or []
     active = active_card(state, yi)
     active_missing_hp = 0
@@ -945,19 +1069,14 @@ def bounded_setup_choice(obs, ranked):
                 and play_id(index) in BASIC_SETUP_POKEMON
             )
 
-    if choice is None and active_missing_hp >= 50:
-        for healing_id in (1147, 1212):
-            choice = best_index(
-                lambda index, cid=healing_id: options[index].get("type") == 7
-                and play_id(index) == cid
-            )
-            if choice is not None:
-                break
-
-    if choice is None and hand_count(state, 1 - yi) >= 5:
+    if (
+        choice is None
+        and card_id(active) == 1031
+        and active_missing_hp >= 90
+    ):
         choice = best_index(
             lambda index: options[index].get("type") == 7
-            and play_id(index) == 1197
+            and play_id(index) == 1229
         )
 
     if choice is None:
@@ -973,18 +1092,6 @@ def bounded_setup_choice(obs, ranked):
             and options[index].get("inPlayArea") == 5
         )
 
-    if choice is None:
-        has_dwebble = any(
-            card_id(card) == 344 for _, _, _, card in board_cards(state, yi)
-        )
-        has_crustle = 345 in hand_ids(state, yi)
-        can_evolve = any(option.get("type") == 9 for option in options)
-        if has_dwebble and not has_crustle and not can_evolve:
-            choice = best_index(
-                lambda index: options[index].get("type") == 7
-                and play_id(index) == 1152
-            )
-
     if choice is None and not bool(state.get("energyAttached")):
         choice = best_index(
             lambda index: options[index].get("type") == 8
@@ -993,31 +1100,14 @@ def bounded_setup_choice(obs, ranked):
             and not readiness(target_card(obs, options[index]))["ready"]
         )
 
-    if choice is None:
-        has_unready_target = any(
-            not readiness(card)["ready"] for _, _, _, card in board_cards(state, yi)
+    if choice is None and not bool(state.get("energyAttached")):
+        choice = best_index(
+            lambda index: options[index].get("type") == 8
+            and card_id(option_card(obs, options[index])) == 17
+            and options[index].get("inPlayArea") == 4
+            and card_id(target_card(obs, options[index])) == 1031
+            and readiness(target_card(obs, options[index]))["damage"] < 210
         )
-        if has_unready_target:
-            for setup_id in (1198, 1235):
-                choice = best_index(
-                    lambda index, cid=setup_id: options[index].get("type") == 7
-                    and play_id(index) == cid
-                )
-                if choice is not None:
-                    break
-        elif not WAITRESS_ONLY_WHEN_UNREADY:
-            choice = best_index(
-                lambda index: options[index].get("type") == 7
-                and play_id(index) == 1235
-            )
-        if (
-            choice is None
-            and len(card_list(state, yi, 2, {})) <= LILLIE_DEFERRAL_HAND_LIMIT
-        ):
-            choice = best_index(
-                lambda index: options[index].get("type") == 7
-                and play_id(index) == 1227
-            )
 
     if choice is None:
         return None

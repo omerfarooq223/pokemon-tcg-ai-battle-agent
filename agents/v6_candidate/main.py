@@ -741,6 +741,12 @@ def score_target_selection(obs, option):
         if context in (4, 43):
             score += 260.0 if readiness(card)["ready"] else 0.0
             score += 120.0 if area == 5 else 0.0
+            opponent = active_card(state, 1 - yi)
+            opponent_hp = (
+                as_int(opponent.get("hp"), 0) if isinstance(opponent, dict) else 0
+            )
+            if cid == 117 and readiness(card)["ready"] and 121 <= opponent_hp <= 140:
+                score += 520.0
     elif owner != yi and area in (4, 5):
         score += 130.0
         if isinstance(card, dict):
@@ -781,6 +787,18 @@ def card_pick_score(obs, cid, area, context):
             score -= 35.0
     if area == 3 and cid in ENERGY_CARDS:
         score += 80.0
+    hand = hand_ids(state, yi)
+    effect_id = card_id(select_state(obs).get("effect"))
+    hand_has_backup = any(card in BASIC_SETUP_POKEMON for card in hand)
+    if (
+        effect_id == 1152
+        and area == 1
+        and cid in BASIC_SETUP_POKEMON
+        and len(board_cards(state, yi)) == 1
+        and 345 in hand
+        and not hand_has_backup
+    ):
+        score += 240.0
     return score
 
 

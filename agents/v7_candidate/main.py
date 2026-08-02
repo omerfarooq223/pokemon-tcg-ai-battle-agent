@@ -176,6 +176,21 @@ MIST_ACTIVE_THREATS = {
     1058,
 }
 
+# HP thresholds where specific attackers guarantee KO. Used to avoid
+# wasting setup turns when lethal damage is already achievable.
+# Crustle (117) Demolish: 140. Incineroar (797) Infernal Slash: 220.
+# Diggersby (1074) Earthquake: 140. Tsareena (398) Petal Blade Dance: 130.
+KO_HP_BY_ATTACKER = {
+    117: 140,
+    797: 220,
+    1074: 140,
+    398: 130,
+    345: 120,
+    756: 200,
+    184: 200,
+    63: 140,
+}
+
 
 def agent_path(filename):
     kaggle_path = os.path.join("/kaggle_simulations/agent", filename)
@@ -186,9 +201,39 @@ def agent_path(filename):
     return os.path.join(local_dir, filename)
 
 
+EXPECTED_DECK = [
+    344, 344, 344, 344, 345, 345, 345, 345, 117, 117, 1086, 1086,
+    1086, 1086, 1152, 1152, 1152, 1152, 1198, 1198, 1198, 1227,
+    1227, 1227, 1227, 1197, 1197, 1197, 1235, 1235, 1235, 1235,
+    1147, 1147, 1147, 1147, 1159, 18, 18, 18, 18, 11, 11, 11, 14,
+    14, 14, 6, 6, 6, 6, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+]
+
+
 def load_deck():
-    with open(agent_path("deck.csv"), encoding="utf-8-sig") as handle:
-        return [int(line.strip().split(",")[0]) for line in handle if line.strip()]
+    candidate_paths = [
+        os.path.join("/kaggle_simulations/agent", "deck.csv"),
+    ]
+    source_path = globals().get("__file__", "")
+    if source_path:
+        candidate_paths.append(
+            os.path.join(os.path.dirname(os.path.abspath(source_path)), "deck.csv")
+        )
+    candidate_paths.append(os.path.join(os.getcwd(), "deck.csv"))
+
+    for path in candidate_paths:
+        try:
+            with open(path, encoding="utf-8-sig") as handle:
+                deck = [
+                    int(line.strip().split(",")[0])
+                    for line in handle
+                    if line.strip()
+                ]
+        except (OSError, ValueError):
+            continue
+        if deck == EXPECTED_DECK:
+            return deck
+    return EXPECTED_DECK
 
 
 DECK = load_deck()
@@ -413,6 +458,38 @@ def opponent_ability_pressure(obs):
     return active_ability, any_ability
 
 
+def opponent_prize_count(obs):
+    """Estimate opponent remaining prizes from deck state."""
+    state = current_state(obs)
+    opp = 1 - your_index(state)
+    ps = players(state)
+    if opp >= len(ps):
+        return 6
+    return as_int(ps[opp].get("prizeCount"), 6)
+
+
+def our_prize_count(obs):
+    """Our remaining prizes."""
+    state = current_state(obs)
+    yi = your_index(state)
+    ps = players(state)
+    if yi >= len(ps):
+        return 6
+    return as_int(ps[yi].get("prizeCount"), 6)
+
+
+def can_ko_active_opponent(obs, attacker_id):
+    """Return True if the named attacker can OHKO the current opponent active."""
+    state = current_state(obs)
+    opp = 1 - your_index(state)
+    target = active_card(state, opp)
+    if not isinstance(target, dict):
+        return False
+    hp = as_int(target.get("hp"), 0)
+    damage = KO_HP_BY_ATTACKER.get(attacker_id, 0)
+    return hp > 0 and damage >= hp
+
+
 def board_target_score(obs, target, extra_energy=None, source_energy_index=None):
     if not isinstance(target, dict):
         return 0.0
@@ -443,6 +520,15 @@ def board_target_score(obs, target, extra_energy=None, source_energy_index=None)
     elif target.get("id") == 1074 and not active_ex:
         score += 180.0
     score += POKEMON_ROLE.get(target.get("id"), 0.0)
+    # Late-game boost: push key attackers harder when prizes are low
+    opp_prizes = opponent_prize_count(obs)
+    our_prizes = our_prize_count(obs)
+    if opp_prizes <= 2 and target.get("id") in KO_HP_BY_ATTACKER:
+        score += 200.0
+    if our_prizes <= 2:
+        # We're close to winning; strongly prefer ready attackers
+        if r_after["ready"]:
+            score += 280.0
     return score
 
 
@@ -502,6 +588,15 @@ def score_play_from_hand(obs, option):
                 score += 90.0
     if as_int(state.get("supporterPlayed"), 0) and cid in {1182, 1197, 1198, 1205}:
         score -= 250.0
+    # Healing: strongly prefer when our active is low on HP
+    if cid in (1147, 1212):
+        active = active_card(state, yi)
+        if isinstance(active, dict):
+            missing_hp = as_int(active.get("maxHp"), 0) - as_int(active.get("hp"), 0)
+            if missing_hp >= 80:
+                score += 180.0
+            elif missing_hp >= 40:
+                score += 80.0
     return score
 
 
@@ -653,6 +748,10 @@ def score_attach_or_evolve(obs, option):
             score += 55.0
         if target and target.get("id") == 63 and cid in (4, 6):
             score += 45.0
+        # Extra urgency: attach to active when opponent can be KO'd next turn
+        if target_area == 4 and card_id(target) in KO_HP_BY_ATTACKER:
+            if can_ko_active_opponent(obs, card_id(target)):
+                score += 140.0
     elif cid in POKEMON_ROLE:
         score += POKEMON_ROLE[cid]
         if option.get("inPlayArea") == 4:
@@ -687,6 +786,9 @@ def score_board_action(obs, option):
             score += 280.0
         if cid in ABILITY_POKEMON:
             score += 70.0
+        # Prefer retreating to a KO-ready benched attacker when opponent is vulnerable
+        if option.get("area") == 4 and r["ready"] and can_ko_active_opponent(obs, cid):
+            score += 350.0
     return score
 
 
@@ -741,6 +843,19 @@ def score_target_selection(obs, option):
         if context in (4, 43):
             score += 260.0 if readiness(card)["ready"] else 0.0
             score += 120.0 if area == 5 else 0.0
+            opponent = active_card(state, 1 - yi)
+            opponent_hp = (
+                as_int(opponent.get("hp"), 0) if isinstance(opponent, dict) else 0
+            )
+            # Crustle range: 140 damage, so any HP <= 140 is lethal.
+            if cid == 117 and readiness(card)["ready"] and 0 < opponent_hp <= 140:
+                score += 520.0
+            # Incineroar: 220 damage, lethal up to 220 hp.
+            if cid == 797 and readiness(card)["ready"] and 0 < opponent_hp <= 220:
+                score += 480.0
+            # Diggersby: 140 damage.
+            if cid == 1074 and readiness(card)["ready"] and 0 < opponent_hp <= 140:
+                score += 460.0
     elif owner != yi and area in (4, 5):
         score += 130.0
         if isinstance(card, dict):
@@ -749,6 +864,12 @@ def score_target_selection(obs, option):
             score += len(card.get("energies") or []) * 45.0
             if area == 4:
                 score += 85.0
+            # Strongly prefer already-damaged opponent targets (closer to KO)
+            opp_cid = card_id(card)
+            opp_hp = as_int(card.get("hp"), 0)
+            opp_max_hp = as_int(card.get("maxHp"), 0)
+            if opp_max_hp and opp_hp <= opp_max_hp * 0.4:
+                score += 200.0
     elif area in (1, 2, 12, 3):
         score += card_pick_score(obs, cid, area, context)
     return score
@@ -781,6 +902,24 @@ def card_pick_score(obs, cid, area, context):
             score -= 35.0
     if area == 3 and cid in ENERGY_CARDS:
         score += 80.0
+    hand = hand_ids(state, yi)
+    effect_id = card_id(select_state(obs).get("effect"))
+    hand_has_backup = any(card in BASIC_SETUP_POKEMON for card in hand)
+    if (
+        effect_id == 1152
+        and area == 1
+        and cid in BASIC_SETUP_POKEMON
+        and len(board_cards(state, yi)) == 1
+        and 345 in hand
+        and not hand_has_backup
+    ):
+        score += 240.0
+    # When Poké Ball (1086) or similar search effects look for Basics, prefer
+    # the strongest attacker that is missing only one energy step.
+    if effect_id in (1086, 1152) and area == 1 and cid in POKEMON_ROLE:
+        board_ids = {card_id(c) for c in board_cards_only(state, yi)}
+        if cid not in board_ids:
+            score += 60.0
     return score
 
 
@@ -811,6 +950,18 @@ def score_attack(obs, option):
     attack_id = option.get("attackId")
     damage = ATTACK_DAMAGE_BY_ID.get(as_int(attack_id, -1), r["damage"])
     score = BASE_TYPE_SCORE[13] + damage * 1.8 + hp_pressure_bonus(obs, damage)
+    # Prize pressure: prefer attacking over setup when prizes are low on either side
+    opp_prizes = opponent_prize_count(obs)
+    our_prizes = our_prize_count(obs)
+    if opp_prizes <= 2 or our_prizes <= 2:
+        score += 300.0
+    # Bonus for attacks that can KO the active opponent
+    opp = 1 - yi
+    opp_active = active_card(state, opp)
+    if isinstance(opp_active, dict):
+        opp_hp = as_int(opp_active.get("hp"), 0)
+        if opp_hp and damage >= opp_hp:
+            score += 500.0
     return score
 
 
@@ -914,6 +1065,12 @@ def bounded_setup_choice(obs, ranked):
     seen.add(signature)
 
     if ATTACK_DEFERRALS.get(turn_key, 0) >= MAX_ATTACK_DEFERRALS:
+        return None
+
+    # Never defer setup when we are at prize parity ≤ 1 and can attack now
+    opp_prizes = opponent_prize_count(obs)
+    our_prizes = our_prize_count(obs)
+    if opp_prizes <= 1 or our_prizes <= 1:
         return None
 
     options = select_state(obs).get("option") or []

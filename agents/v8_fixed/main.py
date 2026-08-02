@@ -176,6 +176,19 @@ MIST_ACTIVE_THREATS = {
     1058,
 }
 
+# Maximum damage each key attacker can deal per attack.
+# Used to detect lethal threat and force energy/attack priority.
+KO_HP_BY_ATTACKER = {
+    117: 140,   # Cornerstone Mask Ogerpon ex — Demolish
+    797: 220,   # Incineroar — Infernal Slash
+    1074: 140,  # Diggersby — Earthquake
+    398: 130,   # Tsareena — Petal Blade Dance
+    345: 120,   # Crustle — Superb Scissors
+    756: 200,   # Kangaskhan ex — Rapid-Fire Combo
+    184: 200,   # Miraidon ex — Eon Blade
+    63: 140,    # Raikou V — Bellowing Thunder
+}
+
 
 def agent_path(filename):
     kaggle_path = os.path.join("/kaggle_simulations/agent", filename)
@@ -195,7 +208,7 @@ DECK = load_deck()
 ATTACK_DEFERRALS = {}
 ATTACK_MENU_STATES = {}
 LAST_TURN_SEEN = None
-MAX_ATTACK_DEFERRALS = 3
+MAX_ATTACK_DEFERRALS = 2
 LILLIE_DEFERRAL_HAND_LIMIT = 8
 WAITRESS_ONLY_WHEN_UNREADY = True
 
@@ -391,6 +404,38 @@ def hp_pressure_bonus(obs, damage):
     return min(damage, 220) * 0.12
 
 
+def opponent_prize_count(obs):
+    """Opponent's remaining prize cards (lower = they are closer to winning)."""
+    state = current_state(obs)
+    opp = 1 - your_index(state)
+    ps = players(state)
+    if opp >= len(ps):
+        return 6
+    return as_int(ps[opp].get("prizeCount"), 6)
+
+
+def our_prize_count(obs):
+    """Our remaining prize cards (lower = we are closer to winning)."""
+    state = current_state(obs)
+    yi = your_index(state)
+    ps = players(state)
+    if yi >= len(ps):
+        return 6
+    return as_int(ps[yi].get("prizeCount"), 6)
+
+
+def can_ko_active_opponent(obs, attacker_id):
+    """Return True if the named attacker can one-shot the current opponent active."""
+    state = current_state(obs)
+    opp = 1 - your_index(state)
+    target = active_card(state, opp)
+    if not isinstance(target, dict):
+        return False
+    hp = as_int(target.get("hp"), 0)
+    damage = KO_HP_BY_ATTACKER.get(attacker_id, 0)
+    return hp > 0 and damage >= hp
+
+
 def opponent_ex_pressure(obs):
     state = current_state(obs)
     opp = 1 - your_index(state)
@@ -439,10 +484,19 @@ def board_target_score(obs, target, extra_energy=None, source_energy_index=None)
     elif target.get("id") == 344:
         score += 140.0 if any_ex else 0.0
     elif target.get("id") == 117:
-        score += 440.0 if active_ability else (100.0 if any_ability else -120.0)
+        opp_metal = any(card_id(c) in {4, 75, 79, 107} for c in board_cards_only(state, 1 - yi))
+        score += 540.0 if (active_ability or opp_metal) else (150.0 if any_ability else -80.0)
     elif target.get("id") == 1074 and not active_ex:
         score += 180.0
     score += POKEMON_ROLE.get(target.get("id"), 0.0)
+    # Late-game pressure: push key attackers harder when prizes are critical
+    opp_prizes = opponent_prize_count(obs)
+    our_prizes = our_prize_count(obs)
+    if opp_prizes <= 2 and target.get("id") in KO_HP_BY_ATTACKER:
+        score += 200.0
+    if our_prizes <= 2 and r_after["ready"]:
+        # We are close to winning — strongly prefer ready attackers
+        score += 280.0
     return score
 
 
@@ -473,12 +527,17 @@ def score_play_from_hand(obs, option):
     if cid in DISRUPTION_CARDS:
         score += 70.0 + hp_pressure_bonus(obs, 90)
     opponent_hand = hand_count(state, 1 - yi)
+    opp_board_ids = {card_id(c) for c in board_cards_only(state, 1 - yi)}
+    opp_has_alakazam = bool(opp_board_ids & {4, 29, 32})
     if cid == 1197:
-        if opponent_hand <= 3:
+        min_hand_threshold = 3 if opp_has_alakazam else 4
+        if opponent_hand < min_hand_threshold:
             return -850.0
-        score += (opponent_hand - 3) * 175.0
-        if opponent_hand >= 8:
-            score += 420.0
+        score += (opponent_hand - 3) * 220.0
+        if opponent_hand >= 5:
+            score += 550.0
+        if opp_has_alakazam:
+            score += 400.0
     if cid == 1198:
         score += 120.0
         if any(card_id(card) in ENERGY_CARDS for card in hand):
@@ -502,6 +561,15 @@ def score_play_from_hand(obs, option):
                 score += 90.0
     if as_int(state.get("supporterPlayed"), 0) and cid in {1182, 1197, 1198, 1205}:
         score -= 250.0
+    # Healing urgency: strongly prefer Jumbo Ice Cream / Cook when active is damaged
+    if cid in (1147, 1212):
+        active = active_card(state, yi)
+        if isinstance(active, dict):
+            missing_hp = as_int(active.get("maxHp"), 0) - as_int(active.get("hp"), 0)
+            if missing_hp >= 80:
+                score += 180.0
+            elif missing_hp >= 40:
+                score += 80.0
     return score
 
 
@@ -653,6 +721,10 @@ def score_attach_or_evolve(obs, option):
             score += 55.0
         if target and target.get("id") == 63 and cid in (4, 6):
             score += 45.0
+        # Extra urgency: attaching to active that can already KO the opponent
+        if target_area == 4 and card_id(target) in KO_HP_BY_ATTACKER:
+            if can_ko_active_opponent(obs, card_id(target)):
+                score += 140.0
     elif cid in POKEMON_ROLE:
         score += POKEMON_ROLE[cid]
         if option.get("inPlayArea") == 4:
@@ -687,6 +759,9 @@ def score_board_action(obs, option):
             score += 280.0
         if cid in ABILITY_POKEMON:
             score += 70.0
+        # Prefer retreating to a bench attacker that can immediately KO the opponent
+        if option.get("area") == 4 and r["ready"] and can_ko_active_opponent(obs, cid):
+            score += 350.0
     return score
 
 
@@ -741,6 +816,16 @@ def score_target_selection(obs, option):
         if context in (4, 43):
             score += 260.0 if readiness(card)["ready"] else 0.0
             score += 120.0 if area == 5 else 0.0
+            opponent = active_card(state, 1 - yi)
+            opponent_hp = (
+                as_int(opponent.get("hp"), 0) if isinstance(opponent, dict) else 0
+            )
+            # Cornerstone Ogerpon ex: 140 damage is lethal up to 140 HP
+            if cid == 117 and readiness(card)["ready"] and 0 < opponent_hp <= 140:
+                score += 520.0
+            # Crustle: 120 damage, lethal up to 120 HP
+            if cid == 345 and readiness(card)["ready"] and 0 < opponent_hp <= 120:
+                score += 400.0
     elif owner != yi and area in (4, 5):
         score += 130.0
         if isinstance(card, dict):
@@ -749,6 +834,12 @@ def score_target_selection(obs, option):
             score += len(card.get("energies") or []) * 45.0
             if area == 4:
                 score += 85.0
+            # Strongly prefer already-damaged opponent targets (closer to KO)
+            opp_cid = card_id(card)
+            opp_hp = as_int(card.get("hp"), 0)
+            opp_max_hp = as_int(card.get("maxHp"), 0)
+            if opp_max_hp and opp_hp <= opp_max_hp * 0.4:
+                score += 200.0
     elif area in (1, 2, 12, 3):
         score += card_pick_score(obs, cid, area, context)
     return score
@@ -811,6 +902,18 @@ def score_attack(obs, option):
     attack_id = option.get("attackId")
     damage = ATTACK_DAMAGE_BY_ID.get(as_int(attack_id, -1), r["damage"])
     score = BASE_TYPE_SCORE[13] + damage * 1.8 + hp_pressure_bonus(obs, damage)
+    # Prize pressure: attacking is even more urgent when prizes are low on either side
+    opp_prizes = opponent_prize_count(obs)
+    our_prizes = our_prize_count(obs)
+    if opp_prizes <= 2 or our_prizes <= 2:
+        score += 300.0
+    # Bonus when attack can KO the active opponent
+    opp = 1 - yi
+    opp_active = active_card(state, opp)
+    if isinstance(opp_active, dict):
+        opp_hp = as_int(opp_active.get("hp"), 0)
+        if opp_hp and damage >= opp_hp:
+            score += 500.0
     return score
 
 
@@ -1061,6 +1164,8 @@ def choose_action(obs):
         if score <= 0:
             break
         chosen.append(index)
+    if not chosen and options and select.get("context") in (1, 2, 3, 4, 5, 7, 19, 21, 22, 43):
+        chosen = [ranked[0][1]]
     return chosen
 
 

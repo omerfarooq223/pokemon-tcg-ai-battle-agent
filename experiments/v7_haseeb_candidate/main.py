@@ -49,15 +49,6 @@ ATTACHED_ENERGY_TYPES = {
 # Cost symbols use C for colorless. The profiles are intentionally compact and cover
 # our deck's attackers; unknown Pokemon fall back to simple attached-energy scoring.
 ATTACKS = {
-    117: [{"cost": ["F", "C", "C"], "damage": 140, "name": "Demolish"}],
-    344: [{"cost": ["C"], "damage": 0, "name": "Ascension"}],
-    345: [{"cost": ["G", "C", "C"], "damage": 120, "name": "Superb Scissors"}],
-    397: [{"cost": ["G"], "damage": 20, "name": "Cut Up"}],
-    398: [{"cost": ["G"], "damage": 130, "name": "Petal Blade Dance"}],
-    796: [{"cost": ["R"], "damage": 10, "name": "Chop"}],
-    797: [{"cost": ["R"], "damage": 220, "name": "Infernal Slash"}],
-    1073: [{"cost": ["C"], "damage": 10, "name": "Smash Kick"}],
-    1074: [{"cost": ["C"], "damage": 140, "name": "Earthquake"}],
     756: [{"cost": ["C", "C", "C"], "damage": 200, "name": "Rapid-Fire Combo"}],
     1071: [{"cost": ["C", "C", "C"], "damage": 60, "name": "Tuck Tail"}],
     96: [{"cost": ["G", "G", "G"], "damage": 90, "name": "Myriad Leaf Shower"}],
@@ -66,7 +57,6 @@ ATTACKS = {
     184: [{"cost": ["P", "P", "C"], "damage": 200, "name": "Eon Blade"}],
     140: [{"cost": ["C", "C", "C"], "damage": 90, "name": "Cruel Arrow"}],
     272: [{"cost": ["P", "C"], "damage": 80, "name": "Full Moon Rondo"}],
-    978: [{"cost": ["F", "C"], "damage": 80, "name": "Coordinated Throwing"}],
 }
 
 ATTACK_DAMAGE_BY_ID = {
@@ -87,11 +77,6 @@ ATTACK_DAMAGE_BY_ID = {
 }
 
 POKEMON_ROLE = {
-    117: 170.0,
-    797: 165.0,
-    1074: 155.0,
-    398: 145.0,
-    345: 125.0,
     756: 120.0,
     96: 105.0,
     184: 90.0,
@@ -100,11 +85,6 @@ POKEMON_ROLE = {
     140: 65.0,
     1071: 60.0,
     272: 50.0,
-    978: 45.0,
-    344: 42.0,
-    796: 40.0,
-    1073: 40.0,
-    397: 38.0,
 }
 
 # Card metadata is not included in each observation.  This compact ID set lets the
@@ -147,7 +127,7 @@ DRAW_SEARCH_CARDS = {1088, 1097, 1098, 1121, 1152, 1198, 1205, 1250}
 DISRUPTION_CARDS = {1182, 1197}
 ENERGY_CARDS = set(ENERGY_CARD_TYPES)
 ABILITY_POKEMON = {96, 756, 1071, 140, 184, 272}
-BASIC_SETUP_POKEMON = {117, 344, 397, 796, 1073}
+BASIC_SETUP_POKEMON = {96, 756, 184, 108, 63, 140, 272, 1071}
 
 # Pokémon whose attacks place or move damage counters, cause delayed effects,
 # or impose attack effects that Mist Energy can prevent. These profiles come
@@ -376,6 +356,21 @@ def best_board_readiness(state, player):
     return best
 
 
+def prize_counts(state):
+    """Remaining prize cards for (player0, player1). Falls back to 6 (a fresh
+    game) if the field is missing or malformed, which keeps this purely
+    additive: unknown/odd states behave like turn one."""
+    ps = players(state)
+
+    def count(i):
+        if not isinstance(ps, list) or i < 0 or i >= len(ps):
+            return 6
+        prize = ps[i].get("prize")
+        return len(prize) if isinstance(prize, list) else 6
+
+    return count(0), count(1)
+
+
 def hp_pressure_bonus(obs, damage):
     state = current_state(obs)
     yi = your_index(state)
@@ -384,8 +379,15 @@ def hp_pressure_bonus(obs, damage):
     if not isinstance(target, dict):
         return 0.0
     hp = as_int(target.get("hp"), 0)
+    counts = prize_counts(state)
+    opp_prizes_left = counts[opp] if opp in (0, 1) else 6
+    ko_bonus = 420.0
+    if opp_prizes_left <= 2:
+        ko_bonus = 640.0
+    elif opp_prizes_left <= 4:
+        ko_bonus = 500.0
     if hp and damage >= hp:
-        return 420.0
+        return ko_bonus
     if hp and damage >= hp * 0.65:
         return 120.0
     return min(damage, 220) * 0.12
@@ -741,6 +743,12 @@ def score_target_selection(obs, option):
         if context in (4, 43):
             score += 260.0 if readiness(card)["ready"] else 0.0
             score += 120.0 if area == 5 else 0.0
+            opponent = active_card(state, 1 - yi)
+            opponent_hp = (
+                as_int(opponent.get("hp"), 0) if isinstance(opponent, dict) else 0
+            )
+            if cid == 117 and readiness(card)["ready"] and 121 <= opponent_hp <= 140:
+                score += 520.0
     elif owner != yi and area in (4, 5):
         score += 130.0
         if isinstance(card, dict):
@@ -781,6 +789,18 @@ def card_pick_score(obs, cid, area, context):
             score -= 35.0
     if area == 3 and cid in ENERGY_CARDS:
         score += 80.0
+    hand = hand_ids(state, yi)
+    effect_id = card_id(select_state(obs).get("effect"))
+    hand_has_backup = any(card in BASIC_SETUP_POKEMON for card in hand)
+    if (
+        effect_id == 1152
+        and area == 1
+        and cid in BASIC_SETUP_POKEMON
+        and len(board_cards(state, yi)) == 1
+        and 345 in hand
+        and not hand_has_backup
+    ):
+        score += 240.0
     return score
 
 
@@ -814,6 +834,53 @@ def score_attack(obs, option):
     return score
 
 
+def score_retreat(obs):
+    """RETREAT was previously a flat, situation-blind score (BASE + 40), so the
+    agent almost never chose to voluntarily swap out a dying or dead-weight
+    active. This adds real signal: HP fraction remaining, whether the active
+    can even attack this turn, and whether a benched Pokemon is clearly
+    better positioned, scaled up when we're low on prizes and can't afford to
+    lose the active for free."""
+    state = current_state(obs)
+    yi = your_index(state)
+    score = BASE_TYPE_SCORE.get(12, 80.0) + 40.0
+    active = active_card(state, yi)
+    if not isinstance(active, dict):
+        return score
+
+    max_hp = as_int(active.get("maxHp"), 0) or 1
+    hp = as_int(active.get("hp"), 0)
+    hp_ratio = hp / max_hp
+    active_r = readiness(active)
+    active_score = active_r["score"] + POKEMON_ROLE.get(active.get("id"), 0.0) * 0.2
+
+    bench_best = None
+    for zone, area, index, card in board_cards(state, yi):
+        if area == 4:
+            continue
+        r = readiness(card)
+        candidate = r["score"] + POKEMON_ROLE.get(card.get("id"), 0.0) * 0.2
+        if bench_best is None or candidate > bench_best:
+            bench_best = candidate
+
+    danger = 0.0
+    if hp_ratio <= 0.35:
+        danger += 260.0
+    elif hp_ratio <= 0.55:
+        danger += 120.0
+    if not active_r["ready"]:
+        danger += 90.0
+    if bench_best is not None and bench_best > active_score + 40.0:
+        danger += min((bench_best - active_score) * 0.6, 260.0)
+
+    counts = prize_counts(state)
+    prizes_left = counts[yi] if yi in (0, 1) else 6
+    if prizes_left <= 2 and hp_ratio <= 0.55:
+        danger += 90.0
+
+    return score + danger
+
+
 def score_option(obs, option):
     option_type = option.get("type")
     if option_type == 13:
@@ -828,9 +895,9 @@ def score_option(obs, option):
         return score_target_selection(obs, option)
     if option_type == 5:
         return score_energy_source(obs, option)
-    score = BASE_TYPE_SCORE.get(option_type, 0.0)
     if option_type == 12:
-        score += 40.0
+        return score_retreat(obs)
+    score = BASE_TYPE_SCORE.get(option_type, 0.0)
     if option_type == 14 and any(candidate.get("type") != 14 for candidate in select_state(obs).get("option") or []):
         score -= 900.0
     return score

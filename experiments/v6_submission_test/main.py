@@ -143,38 +143,11 @@ ABILITY_POKEMON_IDS = {
     1040, 1045, 1052, 1054, 1059, 1071, 1099, 1136, 1138, 1150, 1151,
 }
 
-DRAW_SEARCH_CARDS = {1088, 1097, 1098, 1121, 1152, 1198, 1205, 1250}
+DRAW_SEARCH_CARDS = {1121, 1152, 1198, 1205, 1250, 1088, 1098, 1097}
 DISRUPTION_CARDS = {1182, 1197}
 ENERGY_CARDS = set(ENERGY_CARD_TYPES)
 ABILITY_POKEMON = {96, 756, 1071, 140, 184, 272}
 BASIC_SETUP_POKEMON = {117, 344, 397, 796, 1073}
-
-# Pokémon whose attacks place or move damage counters, cause delayed effects,
-# or impose attack effects that Mist Energy can prevent. These profiles come
-# from the supplied English card data and are independent of opponent identity.
-MIST_ACTIVE_THREATS = {
-    29,
-    32,
-    56,
-    94,
-    121,
-    215,
-    219,
-    223,
-    245,
-    247,
-    432,
-    455,
-    593,
-    738,
-    743,
-    817,
-    864,
-    876,
-    880,
-    982,
-    1058,
-}
 
 
 def agent_path(filename):
@@ -376,6 +349,21 @@ def best_board_readiness(state, player):
     return best
 
 
+def prize_counts(state):
+    """Remaining prize cards for (player0, player1). Falls back to 6 (a fresh
+    game) if the field is missing or malformed, which keeps this purely
+    additive: unknown/odd states behave like turn one."""
+    ps = players(state)
+
+    def count(i):
+        if not isinstance(ps, list) or i < 0 or i >= len(ps):
+            return 6
+        prize = ps[i].get("prize")
+        return len(prize) if isinstance(prize, list) else 6
+
+    return count(0), count(1)
+
+
 def hp_pressure_bonus(obs, damage):
     state = current_state(obs)
     yi = your_index(state)
@@ -384,8 +372,17 @@ def hp_pressure_bonus(obs, damage):
     if not isinstance(target, dict):
         return 0.0
     hp = as_int(target.get("hp"), 0)
+    counts = prize_counts(state)
+    opp_prizes_left = counts[opp] if opp in (0, 1) else 6
+    # Closing out the game is worth more the fewer prizes the opponent has left;
+    # a KO here can end the match outright instead of merely trading damage.
+    ko_bonus = 420.0
+    if opp_prizes_left <= 2:
+        ko_bonus = 640.0
+    elif opp_prizes_left <= 4:
+        ko_bonus = 500.0
     if hp and damage >= hp:
-        return 420.0
+        return ko_bonus
     if hp and damage >= hp * 0.65:
         return 120.0
     return min(damage, 220) * 0.12
@@ -399,6 +396,21 @@ def opponent_ex_pressure(obs):
     active_ex = card_id(active) in EX_POKEMON
     any_ex = any(card_id(card) in EX_POKEMON for _, _, _, card in cards)
     return active_ex, any_ex
+
+
+def opponent_deck_ex_pressure(obs):
+    state = current_state(obs)
+    opp = 1 - your_index(state)
+    if any(card_id(card) in EX_POKEMON for _, _, _, card in board_cards(state, opp)):
+        return True
+    ps = players(state)
+    if opp < 0 or opp >= len(ps):
+        return False
+    visible_ids = []
+    for zone in ("deck", "hand", "discard", "active", "bench"):
+        for card in ps[opp].get(zone) or []:
+            visible_ids.append(card_id(card))
+    return sum(1 for cid in visible_ids if cid in EX_POKEMON) >= 3
 
 
 def opponent_ability_pressure(obs):
@@ -433,11 +445,12 @@ def board_target_score(obs, target, extra_energy=None, source_energy_index=None)
         if not isinstance(active, dict) or not readiness(active)["ready"]:
             score += 45.0
     active_ex, any_ex = opponent_ex_pressure(obs)
+    deck_ex = opponent_deck_ex_pressure(obs)
     active_ability, any_ability = opponent_ability_pressure(obs)
     if target.get("id") == 345:
-        score += 360.0 if active_ex else (150.0 if any_ex else 0.0)
+        score += 360.0 if active_ex else (150.0 if any_ex or deck_ex else 0.0)
     elif target.get("id") == 344:
-        score += 140.0 if any_ex else 0.0
+        score += 180.0 if deck_ex else (140.0 if any_ex else 0.0)
     elif target.get("id") == 117:
         score += 440.0 if active_ability else (100.0 if any_ability else -120.0)
     elif target.get("id") == 1074 and not active_ex:
@@ -454,13 +467,6 @@ def hand_ids(state, player):
     return [card_id(card) for card in card_list(state, player, 2, {})]
 
 
-def hand_count(state, player):
-    ps = players(state)
-    if player < 0 or player >= len(ps):
-        return 0
-    return as_int(ps[player].get("handCount"), len(card_list(state, player, 2, {})))
-
-
 def score_play_from_hand(obs, option):
     state = current_state(obs)
     yi = your_index(state)
@@ -472,13 +478,6 @@ def score_play_from_hand(obs, option):
         score += 180.0
     if cid in DISRUPTION_CARDS:
         score += 70.0 + hp_pressure_bonus(obs, 90)
-    opponent_hand = hand_count(state, 1 - yi)
-    if cid == 1197:
-        if opponent_hand <= 3:
-            return -850.0
-        score += (opponent_hand - 3) * 175.0
-        if opponent_hand >= 8:
-            score += 420.0
     if cid == 1198:
         score += 120.0
         if any(card_id(card) in ENERGY_CARDS for card in hand):
@@ -584,65 +583,16 @@ def energy_board_fit_score(obs, energy_id):
     return best if best is not None else -900.0
 
 
-def colored_requirements_paid(card):
-    attached = attached_types(card)
-    attacks = ATTACKS.get(card_id(card)) or []
-    for attack in attacks:
-        colored_cost = [
-            symbol for symbol in attack.get("cost") or [] if symbol != "C"
-        ]
-        if cost_missing(colored_cost, attached) == 0:
-            return True
-    return not attacks
-
-
 def score_attach_or_evolve(obs, option):
     moving = option_card(obs, option)
     target = target_card(obs, option)
     cid = card_id(moving)
     score = BASE_TYPE_SCORE.get(option.get("type"), 0.0)
     if cid in ENERGY_CARDS:
-        attacks = ATTACKS.get(card_id(target)) or []
-        before = readiness(target)
-        useful_cost = max(
-            (len(attack.get("cost") or []) for attack in attacks),
-            default=None,
-        )
-        if (
-            before["ready"]
-            and useful_cost is not None
-            and len(attached_types(target)) >= useful_cost
-        ):
-            # Once a profiled attacker is fully paid, preserve the Energy in
-            # hand/deck instead of stacking it indefinitely in control games.
-            return -1800.0
         if as_int(current_state(obs).get("energyAttached"), 0) and option.get("area") == 2:
             score -= 120.0
         score += board_target_score(obs, target, extra_energy=cid)
         score += energy_fit_bonus(target, cid)
-        if cid == 18 and card_id(target) in {344, 345}:
-            # Grow Grass pays the line's Grass requirement and preserves its
-            # +20 HP when Dwebble evolves into Crustle.
-            score += 220.0
-        state = current_state(obs)
-        opp = 1 - your_index(state)
-        opponent_id = card_id(active_card(state, opp))
-        target_area = option.get("inPlayArea")
-        colored_paid = colored_requirements_paid(target)
-        if (
-            cid == 11
-            and target_area == 4
-            and colored_paid
-            and opponent_id in MIST_ACTIVE_THREATS
-        ):
-            score += 1050.0
-        elif (
-            cid == 14
-            and target_area == 4
-            and colored_paid
-            and opponent_id not in MIST_ACTIVE_THREATS
-        ):
-            score += 190.0
         if target and target.get("id") == 756:
             score += 75.0
         if target and target.get("id") == 96 and cid == 1:
@@ -766,6 +716,8 @@ def card_pick_score(obs, cid, area, context):
             score += board_target_score(obs, active, extra_energy=cid) * 0.35
     if cid in POKEMON_ROLE:
         score += POKEMON_ROLE[cid]
+        if cid in (344, 345) and opponent_deck_ex_pressure(obs):
+            score += 210.0 if cid == 344 else 150.0
         if cid == 756:
             score += 80.0
         if len(card_list(state, yi, 5, {})) >= 7:
@@ -803,6 +755,53 @@ def score_energy_source(obs, option):
     return score
 
 
+def score_retreat(obs):
+    """RETREAT was previously a flat, situation-blind score (BASE + 40), so the
+    agent almost never chose to voluntarily swap out a dying or dead-weight
+    active. This adds real signal: HP fraction remaining, whether the active
+    can even attack this turn, and whether a benched Pokemon is clearly
+    better positioned, scaled up when we're low on prizes and can't afford to
+    lose the active for free."""
+    state = current_state(obs)
+    yi = your_index(state)
+    score = BASE_TYPE_SCORE.get(12, 80.0) + 40.0
+    active = active_card(state, yi)
+    if not isinstance(active, dict):
+        return score
+
+    max_hp = as_int(active.get("maxHp"), 0) or 1
+    hp = as_int(active.get("hp"), 0)
+    hp_ratio = hp / max_hp
+    active_r = readiness(active)
+    active_score = active_r["score"] + POKEMON_ROLE.get(active.get("id"), 0.0) * 0.2
+
+    bench_best = None
+    for zone, area, index, card in board_cards(state, yi):
+        if area == 4:
+            continue
+        r = readiness(card)
+        candidate = r["score"] + POKEMON_ROLE.get(card.get("id"), 0.0) * 0.2
+        if bench_best is None or candidate > bench_best:
+            bench_best = candidate
+
+    danger = 0.0
+    if hp_ratio <= 0.35:
+        danger += 260.0
+    elif hp_ratio <= 0.55:
+        danger += 120.0
+    if not active_r["ready"]:
+        danger += 90.0
+    if bench_best is not None and bench_best > active_score + 40.0:
+        danger += min((bench_best - active_score) * 0.6, 260.0)
+
+    counts = prize_counts(state)
+    prizes_left = counts[yi] if yi in (0, 1) else 6
+    if prizes_left <= 2 and hp_ratio <= 0.55:
+        danger += 90.0
+
+    return score + danger
+
+
 def score_attack(obs, option):
     state = current_state(obs)
     yi = your_index(state)
@@ -828,9 +827,9 @@ def score_option(obs, option):
         return score_target_selection(obs, option)
     if option_type == 5:
         return score_energy_source(obs, option)
-    score = BASE_TYPE_SCORE.get(option_type, 0.0)
     if option_type == 12:
-        score += 40.0
+        return score_retreat(obs)
+    score = BASE_TYPE_SCORE.get(option_type, 0.0)
     if option_type == 14 and any(candidate.get("type") != 14 for candidate in select_state(obs).get("option") or []):
         score -= 900.0
     return score
@@ -902,11 +901,6 @@ def bounded_setup_choice(obs, ranked):
     state = current_state(obs)
     yi = your_index(state)
     turn_key = reset_attack_memory(state)
-    ps = players(state)
-    if yi < len(ps) and as_int(ps[yi].get("deckCount"), 0) == 0:
-        # A further setup action can remove the legal attack or end the turn;
-        # with no cards left, attack now before the next-turn deck-out check.
-        return None
     signature = attack_menu_signature(obs)
     seen = ATTACK_MENU_STATES.setdefault(turn_key, set())
     if signature in seen:
@@ -953,12 +947,6 @@ def bounded_setup_choice(obs, ranked):
             )
             if choice is not None:
                 break
-
-    if choice is None and hand_count(state, 1 - yi) >= 5:
-        choice = best_index(
-            lambda index: options[index].get("type") == 7
-            and play_id(index) == 1197
-        )
 
     if choice is None:
         choice = best_index(

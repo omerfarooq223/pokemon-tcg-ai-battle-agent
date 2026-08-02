@@ -6,10 +6,6 @@ The project tracks the evolution from a legal-action baseline to an agent that p
 attack readiness, colored-energy placement, promotion, search targets, healing,
 hand control, and bounded pre-attack setup.
 
-> **Competition status:** keep this repository private while the competition is
-> active. The latest agent and deck are competitively sensitive. Review the Kaggle
-> rules before making the repository public or sharing competition-derived data.
-
 ## Repository layout
 
 - `agents/` — versioned agent and deck snapshots.
@@ -33,16 +29,6 @@ submission archives, detailed traces, caches, and leaderboard snapshots.
 Each version directory contains its editable `main.py` policy and 60-card
 `deck.csv`. Submission archives are generated from these two source files and are
 not versioned because they can be reproduced exactly with the build tool.
-
-## Local setup
-
-1. Join the Kaggle competition and accept its rules.
-2. Download the official competition data from Kaggle.
-3. Place the official sample submission under
-   `competition_data/sample_submission/sample_submission/`.
-4. Use Python 3. The project tools otherwise rely on the standard library.
-
-The competition data is not redistributed by this repository.
 
 ## Build an agent submission
 

@@ -29,6 +29,9 @@ ENERGY_CARD_TYPES = {
     14: "C",
     15: "RKT",
     18: "G",
+    13: "C",
+    19: "P",
+    7: "D",
 }
 
 ATTACHED_ENERGY_TYPES = {
@@ -49,6 +52,19 @@ ATTACHED_ENERGY_TYPES = {
 # Cost symbols use C for colorless. The profiles are intentionally compact and cover
 # our deck's attackers; unknown Pokemon fall back to simple attached-energy scoring.
 ATTACKS = {
+    104: [{"cost": ["W", "C"], "damage": 60, "name": "Frost Smash"}],
+    112: [{"cost": ["P", "C"], "damage": 60, "name": "Mind Bend"}],
+    646: [{"cost": ["D"], "damage": 10, "name": "Corkscrew Punch"}],
+    647: [{"cost": ["D", "D"], "damage": 60, "name": "Corkscrew Punch"}],
+    648: [{"cost": ["D", "D"], "damage": 180, "name": "Shadow Bullet"}],
+    860: [{"cost": ["W"], "damage": 10, "name": "Chilly"}],
+    66: [{"cost": ["C", "C", "C"], "damage": 90, "name": "Land Crush"}],
+    140: [{"cost": ["C", "C", "C"], "damage": 100, "name": "Cruel Arrow"}],
+    305: [{"cost": ["C", "C"], "damage": 20, "name": "Ram"}],
+    343: [{"cost": ["C", "C"], "damage": 30, "name": "Smash Kick"}],
+    741: [{"cost": ["P"], "damage": 10, "name": "Teleportation Attack"}],
+    742: [{"cost": ["P"], "damage": 30, "name": "Super Psy Bolt"}],
+    743: [{"cost": ["P"], "damage": 200, "name": "Powerful Hand"}],
     117: [{"cost": ["F", "C", "C"], "damage": 140, "name": "Demolish"}],
     344: [{"cost": ["C"], "damage": 0, "name": "Ascension"}],
     345: [{"cost": ["G", "C", "C"], "damage": 120, "name": "Superb Scissors"}],
@@ -70,6 +86,10 @@ ATTACKS = {
 }
 
 ATTACK_DAMAGE_BY_ID = {
+    934: 60,
+    935: 10,
+    936: 60,
+    937: 180,
     71: 0,
     72: 140,
     120: 90,
@@ -84,9 +104,24 @@ ATTACK_DAMAGE_BY_ID = {
     1407: 80,
     1550: 140,
     1551: 100,
+    1070: 30,
+    1072: 200,
 }
 
 POKEMON_ROLE = {
+    648: 420.0,
+    647: 330.0,
+    646: 280.0,
+    112: 230.0,
+    104: 150.0,
+    860: 90.0,
+    743: 360.0,
+    742: 300.0,
+    741: 260.0,
+    66: 170.0,
+    305: 150.0,
+    140: 115.0,
+    343: 90.0,
     117: 170.0,
     797: 165.0,
     1074: 155.0,
@@ -143,38 +178,13 @@ ABILITY_POKEMON_IDS = {
     1040, 1045, 1052, 1054, 1059, 1071, 1099, 1136, 1138, 1150, 1151,
 }
 
-DRAW_SEARCH_CARDS = {1088, 1097, 1098, 1121, 1152, 1198, 1205, 1250}
+DRAW_SEARCH_CARDS = {
+    1080, 1086, 1097, 1121, 1152, 1219, 1227, 1231, 1259,
+}
 DISRUPTION_CARDS = {1182, 1197}
 ENERGY_CARDS = set(ENERGY_CARD_TYPES)
-ABILITY_POKEMON = {96, 756, 1071, 140, 184, 272}
-BASIC_SETUP_POKEMON = {117, 344, 397, 796, 1073}
-
-# Pokémon whose attacks place or move damage counters, cause delayed effects,
-# or impose attack effects that Mist Energy can prevent. These profiles come
-# from the supplied English card data and are independent of opponent identity.
-MIST_ACTIVE_THREATS = {
-    29,
-    32,
-    56,
-    94,
-    121,
-    215,
-    219,
-    223,
-    245,
-    247,
-    432,
-    455,
-    593,
-    738,
-    743,
-    817,
-    864,
-    876,
-    880,
-    982,
-    1058,
-}
+ABILITY_POKEMON = {104, 112, 648}
+BASIC_SETUP_POKEMON = {112, 646, 860}
 
 
 def agent_path(filename):
@@ -195,7 +205,7 @@ DECK = load_deck()
 ATTACK_DEFERRALS = {}
 ATTACK_MENU_STATES = {}
 LAST_TURN_SEEN = None
-MAX_ATTACK_DEFERRALS = 3
+MAX_ATTACK_DEFERRALS = 8
 LILLIE_DEFERRAL_HAND_LIMIT = 8
 WAITRESS_ONLY_WHEN_UNREADY = True
 
@@ -470,15 +480,10 @@ def score_play_from_hand(obs, option):
     score = BASE_TYPE_SCORE[7]
     if cid in DRAW_SEARCH_CARDS:
         score += 180.0
+    if cid in {1225, 1231}:
+        score += 300.0
     if cid in DISRUPTION_CARDS:
         score += 70.0 + hp_pressure_bonus(obs, 90)
-    opponent_hand = hand_count(state, 1 - yi)
-    if cid == 1197:
-        if opponent_hand <= 3:
-            return -850.0
-        score += (opponent_hand - 3) * 175.0
-        if opponent_hand >= 8:
-            score += 420.0
     if cid == 1198:
         score += 120.0
         if any(card_id(card) in ENERGY_CARDS for card in hand):
@@ -498,6 +503,8 @@ def score_play_from_hand(obs, option):
             score -= 260.0
         else:
             score += POKEMON_ROLE[cid]
+            if cid == 741:
+                score += 220.0
             if cid == 756 and not any(card_id(c) == 756 for c in board_cards_only(state, yi)):
                 score += 90.0
     if as_int(state.get("supporterPlayed"), 0) and cid in {1182, 1197, 1198, 1205}:
@@ -516,6 +523,16 @@ def energy_fit_bonus(target, energy_id):
     energy_type = ENERGY_CARD_TYPES[energy_id]
     attached = attached_types(target)
 
+    if target_id in (741, 742, 743):
+        if energy_type == "P":
+            return 240.0 if "P" not in attached else -20.0
+        return -400.0 if "P" not in attached else 5.0
+    if target_id in (112, 646, 647, 648):
+        if energy_type == "D":
+            return 240.0 if "D" not in attached else 60.0
+        return -380.0 if "D" not in attached else 5.0
+    if target_id in (66, 140, 305, 343):
+        return 45.0
     if target_id == 96:
         return 130.0 if energy_type == "G" else -320.0
     if target_id == 117:
@@ -584,65 +601,16 @@ def energy_board_fit_score(obs, energy_id):
     return best if best is not None else -900.0
 
 
-def colored_requirements_paid(card):
-    attached = attached_types(card)
-    attacks = ATTACKS.get(card_id(card)) or []
-    for attack in attacks:
-        colored_cost = [
-            symbol for symbol in attack.get("cost") or [] if symbol != "C"
-        ]
-        if cost_missing(colored_cost, attached) == 0:
-            return True
-    return not attacks
-
-
 def score_attach_or_evolve(obs, option):
     moving = option_card(obs, option)
     target = target_card(obs, option)
     cid = card_id(moving)
     score = BASE_TYPE_SCORE.get(option.get("type"), 0.0)
     if cid in ENERGY_CARDS:
-        attacks = ATTACKS.get(card_id(target)) or []
-        before = readiness(target)
-        useful_cost = max(
-            (len(attack.get("cost") or []) for attack in attacks),
-            default=None,
-        )
-        if (
-            before["ready"]
-            and useful_cost is not None
-            and len(attached_types(target)) >= useful_cost
-        ):
-            # Once a profiled attacker is fully paid, preserve the Energy in
-            # hand/deck instead of stacking it indefinitely in control games.
-            return -1800.0
         if as_int(current_state(obs).get("energyAttached"), 0) and option.get("area") == 2:
             score -= 120.0
         score += board_target_score(obs, target, extra_energy=cid)
         score += energy_fit_bonus(target, cid)
-        if cid == 18 and card_id(target) in {344, 345}:
-            # Grow Grass pays the line's Grass requirement and preserves its
-            # +20 HP when Dwebble evolves into Crustle.
-            score += 220.0
-        state = current_state(obs)
-        opp = 1 - your_index(state)
-        opponent_id = card_id(active_card(state, opp))
-        target_area = option.get("inPlayArea")
-        colored_paid = colored_requirements_paid(target)
-        if (
-            cid == 11
-            and target_area == 4
-            and colored_paid
-            and opponent_id in MIST_ACTIVE_THREATS
-        ):
-            score += 1050.0
-        elif (
-            cid == 14
-            and target_area == 4
-            and colored_paid
-            and opponent_id not in MIST_ACTIVE_THREATS
-        ):
-            score += 190.0
         if target and target.get("id") == 756:
             score += 75.0
         if target and target.get("id") == 96 and cid == 1:
@@ -687,6 +655,8 @@ def score_board_action(obs, option):
             score += 280.0
         if cid in ABILITY_POKEMON:
             score += 70.0
+        if cid in (104, 112, 648):
+            score += 520.0
     return score
 
 
@@ -810,6 +780,8 @@ def score_attack(obs, option):
     r = readiness(active)
     attack_id = option.get("attackId")
     damage = ATTACK_DAMAGE_BY_ID.get(as_int(attack_id, -1), r["damage"])
+    if card_id(active) == 743:
+        damage = max(damage, hand_count(state, yi) * 20)
     score = BASE_TYPE_SCORE[13] + damage * 1.8 + hp_pressure_bonus(obs, damage)
     return score
 
@@ -902,11 +874,6 @@ def bounded_setup_choice(obs, ranked):
     state = current_state(obs)
     yi = your_index(state)
     turn_key = reset_attack_memory(state)
-    ps = players(state)
-    if yi < len(ps) and as_int(ps[yi].get("deckCount"), 0) == 0:
-        # A further setup action can remove the legal attack or end the turn;
-        # with no cards left, attack now before the next-turn deck-out check.
-        return None
     signature = attack_menu_signature(obs)
     seen = ATTACK_MENU_STATES.setdefault(turn_key, set())
     if signature in seen:
@@ -945,19 +912,15 @@ def bounded_setup_choice(obs, ranked):
                 and play_id(index) in BASIC_SETUP_POKEMON
             )
 
-    if choice is None and active_missing_hp >= 50:
-        for healing_id in (1147, 1212):
-            choice = best_index(
-                lambda index, cid=healing_id: options[index].get("type") == 7
-                and play_id(index) == cid
-            )
-            if choice is not None:
-                break
-
-    if choice is None and hand_count(state, 1 - yi) >= 5:
+    if choice is None:
         choice = best_index(
-            lambda index: options[index].get("type") == 7
-            and play_id(index) == 1197
+            lambda index: options[index].get("type") == 9
+        )
+
+    if choice is None:
+        choice = best_index(
+            lambda index: options[index].get("type") == 10
+            and card_id(option_card(obs, options[index])) in {104, 112, 648}
         )
 
     if choice is None:
@@ -965,12 +928,6 @@ def bounded_setup_choice(obs, ranked):
             lambda index: options[index].get("type") == 8
             and play_id(index) == 1159
             and options[index].get("inPlayArea") == 4
-        )
-
-    if choice is None:
-        choice = best_index(
-            lambda index: options[index].get("type") == 9
-            and options[index].get("inPlayArea") == 5
         )
 
     if choice is None:
@@ -994,30 +951,13 @@ def bounded_setup_choice(obs, ranked):
         )
 
     if choice is None:
-        has_unready_target = any(
-            not readiness(card)["ready"] for _, _, _, card in board_cards(state, yi)
-        )
-        if has_unready_target:
-            for setup_id in (1198, 1235):
-                choice = best_index(
-                    lambda index, cid=setup_id: options[index].get("type") == 7
-                    and play_id(index) == cid
-                )
-                if choice is not None:
-                    break
-        elif not WAITRESS_ONLY_WHEN_UNREADY:
+        for setup_id in (1219, 1227, 1231, 1152, 1086, 1097, 1259):
             choice = best_index(
-                lambda index: options[index].get("type") == 7
-                and play_id(index) == 1235
+                lambda index, cid=setup_id: options[index].get("type") == 7
+                and play_id(index) == cid
             )
-        if (
-            choice is None
-            and len(card_list(state, yi, 2, {})) <= LILLIE_DEFERRAL_HAND_LIMIT
-        ):
-            choice = best_index(
-                lambda index: options[index].get("type") == 7
-                and play_id(index) == 1227
-            )
+            if choice is not None:
+                break
 
     if choice is None:
         return None
@@ -1078,3 +1018,166 @@ def safe_action(obs):
 def agent(obs):
     """Kaggle executes the final function defined in this file."""
     return safe_action(obs)
+
+
+# V11 structural engine: the exact recent top pure-Ogerpon shell, configured
+# as a standalone Kaggle policy.  Keeping this configuration in one file avoids
+# relying on __file__, imports from sibling experiment folders, or the caller's
+# working directory.
+DECK = [
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    18, 18, 96, 96, 96, 96, 1094, 1094, 1094, 1094, 1118, 1118, 1119,
+    1119, 1119, 1119, 1122, 1122, 1122, 1127, 1127, 1137, 1147, 1147,
+    1159, 1182, 1182, 1182, 1201, 1213, 1213, 1213, 1213, 1221, 1223,
+    1223, 1227, 1227, 1227, 1227, 1251, 1251,
+]
+ENERGY_CARD_TYPES = {1: "G", 18: "G"}
+ENERGY_CARDS = {1, 18}
+ATTACKS = {
+    96: [{"cost": ["G", "G", "G"], "damage": 90, "name": "Myriad Leaf Shower"}],
+}
+POKEMON_ROLE = {96: 520.0}
+BASIC_SETUP_POKEMON = {96}
+ABILITY_POKEMON = {96}
+DRAW_SEARCH_CARDS = {1094, 1118, 1119, 1122, 1127, 1213, 1227}
+V11_SAFE_SETUP = {1094, 1118, 1119, 1122, 1127, 1213, 1227, 1251}
+MAX_ATTACK_DEFERRALS = 4
+ATTACK_DEFERRALS.clear()
+ATTACK_MENU_STATES.clear()
+LAST_TURN_SEEN = None
+
+_V11_BASE_SCORE_OPTION = score_option
+
+
+def _v11_board_ids(state, player):
+    return [card_id(card) for _, _, _, card in board_cards(state, player)]
+
+
+def _v11_target_bonus(obs, option):
+    state = current_state(obs)
+    select = select_state(obs)
+    yi = your_index(state)
+    context = select.get("context")
+    owner = option.get("playerIndex", yi)
+    card = option_card(obs, option)
+    cid = card_id(card)
+    area = option.get("area")
+
+    # Never discard a scarce attacker or Energy when a different legal target
+    # exists.  This is intentionally state/card based, not opponent based.
+    if context in (8, 29) and owner == yi and area in (2, 12):
+        value = POKEMON_ROLE.get(cid, 0.0)
+        if cid in ENERGY_CARDS:
+            value += 260.0
+            best = best_board_readiness(state, yi)
+            if best and not best[4]["ready"]:
+                value += 360.0
+        if cid in DRAW_SEARCH_CARDS:
+            value += 180.0
+        if hand_ids(state, yi).count(cid) > 1:
+            value -= 120.0
+        return -5000.0 - value
+
+    bonus = 0.0
+    if owner == yi and area in (1, 12, 3):
+        ids = _v11_board_ids(state, yi)
+        if cid == 96 and ids.count(96) < 4:
+            bonus += 800.0
+        if cid in ENERGY_CARDS:
+            bonus += 520.0
+    return bonus
+
+
+def _v11_play_bonus(obs, option):
+    state = current_state(obs)
+    yi = your_index(state)
+    cid = card_id(option_card(obs, option))
+    ids = _v11_board_ids(state, yi)
+    hand = hand_ids(state, yi)
+    players_now = players(state)
+    oi = 1 - yi
+    opp_hand = hand_count(state, oi) if oi < len(players_now) else 0
+    score = 0.0
+    if cid == 1213:
+        score += 360.0 if opp_hand >= 7 or len(hand) <= 3 else -120.0
+    if cid == 1227:
+        score += 440.0 if len(hand) <= 4 else (-180.0 if len(hand) >= 8 else 80.0)
+    if cid in V11_SAFE_SETUP:
+        score += 130.0
+    if cid == 96:
+        score += 600.0 if ids.count(96) < 3 else 160.0
+    if cid in (1094, 1119) and not (ENERGY_CARDS & set(hand)):
+        score += 500.0
+    if cid == 1118:
+        discarded = [card_id(c) for c in card_list(state, yi, 3, {})]
+        score += 420.0 if 1 in discarded else -400.0
+    if cid == 1251:
+        score += 180.0
+    return score
+
+
+def score_option(obs, option):
+    score = _V11_BASE_SCORE_OPTION(obs, option)
+    option_type = option.get("type")
+    if option_type == 3:
+        score += _v11_target_bonus(obs, option)
+    elif option_type == 7:
+        score += _v11_play_bonus(obs, option)
+    elif option_type == 13:
+        state = current_state(obs)
+        yi = your_index(state)
+        active = active_card(state, yi)
+        if card_id(active) == 96:
+            score += len((active or {}).get("energies") or []) * 80.0
+    elif option_type == 10 and card_id(option_card(obs, option)) == 96:
+        score += 500.0
+    return score
+
+
+def bounded_setup_choice(obs, ranked):
+    state = current_state(obs)
+    yi = your_index(state)
+    turn_key = reset_attack_memory(state)
+    signature = attack_menu_signature(obs)
+    seen = ATTACK_MENU_STATES.setdefault(turn_key, set())
+    if signature in seen:
+        return None
+    seen.add(signature)
+    if ATTACK_DEFERRALS.get(turn_key, 0) >= MAX_ATTACK_DEFERRALS:
+        return None
+    options = select_state(obs).get("option") or []
+
+    def source_id(index):
+        return card_id(option_card(obs, options[index]))
+
+    def highest(predicate):
+        for _, index in ranked:
+            if predicate(index):
+                return index
+        return None
+
+    board_size = len(board_cards(state, yi))
+    choice = None
+    if board_size <= 1:
+        choice = highest(
+            lambda i: options[i].get("type") == 7
+            and (source_id(i) == 96 or source_id(i) in (1094, 1119))
+        )
+    if choice is None:
+        choice = highest(
+            lambda i: options[i].get("type") == 10 and source_id(i) == 96
+        )
+    if choice is None and not bool(state.get("energyAttached")):
+        choice = highest(
+            lambda i: options[i].get("type") == 8
+            and source_id(i) in ENERGY_CARDS
+            and not readiness(target_card(obs, options[i]))["ready"]
+        )
+    if choice is None:
+        choice = highest(
+            lambda i: options[i].get("type") == 7 and source_id(i) in V11_SAFE_SETUP
+        )
+    if choice is None:
+        return None
+    ATTACK_DEFERRALS[turn_key] = ATTACK_DEFERRALS.get(turn_key, 0) + 1
+    return choice
