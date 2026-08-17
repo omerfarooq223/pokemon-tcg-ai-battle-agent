@@ -19,32 +19,30 @@ kaggle.json
 .DS_Store
 .idea/
 .vscode/
-
-# Internal working notes (contain live competition strategy and account details)
-AGENTS.md
-PROJECT_PLAN.md
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
 
 # Official Kaggle downloads and simulator binaries
-# Download these directly after accepting the competition rules.
+# These should be obtained directly from the competition resources
 competition_data/
 
-# Raw replay corpus: large, generated, and contains player-level match data
+# Raw replay corpus and simulation outputs (large generated files)
 scouting_replays/
+top_player_replays/
 tools/evaluation_decks/
+tools/leaderboard_dump/
 
 # Submission bundles and generated experiment traces
+# Exclude everything in artifacts, but whitelist markdown reports and the two major submissions
 artifacts/*
-!artifacts/v4_matrix_after_88290739_60.csv
-!artifacts/v4_top10_after_88290739_300.csv
-!artifacts/v5_candidate_matrix_after_88290739_60.csv
-!artifacts/v5_top10_after_88290739_300.csv
-!artifacts/haseeb_candidate_matrix_after_88290739_60.csv
-
-# Downloaded leaderboard snapshots
-pokemon-tcg-ai-battle-publicleaderboard-*.csv
+!artifacts/*.md
+!artifacts/submission_11.tar.gz
+!artifacts/submission_18.tar.gz
 
 # Local logs and temporary files
 *.log
 *.tmp
 *.tar
-*.tar.gz
