@@ -1,38 +1,33 @@
-"""V18 Grandmaster Agent for Kaggle Pokemon TCG AI Battle Challenge.
+"""V17 Meta-Dominant Master Agent for Kaggle Pokemon TCG AI Battle Challenge.
 
 Architecture & Tactical Invariants:
-1. Dynamic Universal Damage-Immunity Recognition:
-   - Evaluates damage immunity from defensive Pokémon abilities (Crustle, Cornerstone, Mimikyu)
-     AND ACE SPEC Stadiums (Neutralization Zone 1247 on non-Rule Box Pokémon).
-   - When damage immunity is detected, immediately accelerates 2nd energy attachment and fires
-     Spiky Hopper (1226, 160 dmg), which pierces and ignores all defensive effects.
-2. Damaged High-Prize Bench Gusting & Lethal Closeouts:
-   - Prioritizes Boss's Orders (1182) to drag damaged high-prize Pokémon (Mega ex = 3 prizes, ex = 2 prizes)
-     from the bench to claim immediate knockouts, rather than hitting fresh undamaged targets.
-   - Instantly triggers lethal gust closeouts whenever taking down a bench target wins the game.
-3. Draw & Search Lifeline Preservation (Anti-Discard of Lillie/Hilda):
-   - When active attacker has 0 Energy (or hand has no energy), strictly protects Lillie's Determination (1227)
-     and Hilda (1225) from Ultra Ball discards, prioritizing them over Xerosic to guarantee continuous energy flow.
-4. Active Pivot & Trapped Support Escape Invariant:
-   - When an active support Pokémon (Dunsparce/Fan Rotom) has no Air Balloon and 0 Energy, prioritizing
-     Air Balloon or 1 Energy attachment enables immediate retreat into a ready benched Lopunny,
-     completely eliminating trapped-active stall turns.
-5. Attacker Energy Attachment Priority & Turn-1 Enriching Optimization:
-   - On Turn 1 (or when no attacker can strike this turn), Enriching Energy (13) on Dunsparce/Fan Rotom
-     accelerates the hand with +4 cards.
-   - On Turn 2+ when an attacker can strike, energy attachment strictly prioritizes powering the active/benched
-     attacker to guarantee an attack every turn.
-6. Deck-Thinning & Dudunsparce Engine Optimization:
-   - Dudunsparce's Run Away Draw aggressively cycles the deck to find Wally's Compassion and Air Balloons,
-     while safeguarding against deck-out (conserves draw when deck count <= 2).
-7. Dynamic Gale Thrust Free-Retreat Pivot Engine:
-   - Gale Thrust (1225) deals 60 + 170 = 230 DAMAGE for only 1 Colorless Energy when moving from Bench to Active.
-   - Air Balloon (1174, retreat cost -2) enables free pivoting between Active support and Mega Lopunny ex.
-8. Quad-Wally Heal & Recovery Loop:
-   - Heals 120 HP on damaged 330 HP Mega Lopunny ex and safely recycles injured attackers before the opponent
-     can claim prize cards.
-9. 100% Crash-Proof Standard Library Architecture:
-   - Verified on Kaggle loader without external dependencies or disk path assumptions.
+1. Meta Engine: Mega Lopunny ex (849, 330 HP) + Dudunsparce (66) Draw Engine.
+2. Dynamic Gale Thrust Free-Retreat Pivot:
+   - Gale Thrust (1225) deals 60 + 170 = 230 DAMAGE for 1 Colorless Energy when moving from Bench to Active.
+   - Air Balloon (1174, retreat cost -2) enables free pivot between Active support and Mega Lopunny ex.
+3. Spiky Hopper Wall-Piercing Mastery:
+   - Against defensive abilities / damage immunity (Crustle 345, Cornerstone Ogerpon 117, Mimikyu),
+     Spiky Hopper (1226, 160 dmg) ignores all effects on the defending Pokémon.
+4. Comprehensive Simulator Context & Option-Type Mapping:
+   - Option 0 (Context 38): Setup bench number selector (maximizes opening bench).
+   - Option 1/2 (Context 41): Opening setup / coin toss.
+   - Option 3: Target selection & active promotion.
+   - Option 6 (Context 30): Energy discard optimization.
+   - Option 7: Main hand card play (Items, Supporters, Basics).
+   - Option 8: Energy & Tool (Air Balloon) attachments.
+   - Option 9: Evolution (Dudunsparce, Mega Lopunny ex).
+   - Option 10: Ability activation (Dudunsparce Run Away Draw, Fan Call).
+   - Option 12: Retreat / Free Pivot.
+   - Option 13: Attack execution (Gale Thrust 230 dmg, Spiky Hopper 160 dmg).
+   - Option 14: End turn.
+5. Anti-Bench-Wipe & Draw Safeguard:
+   - Prohibits Dudunsparce's Run Away Draw when bench count <= 1 or when no unevolved Basic is benched.
+6. Wally's Compassion (1229) Heal & Loop Sequence:
+   - Heals 120 HP on damaged 330 HP Mega Lopunny ex and safely recycles injured attackers before opponent can claim prizes.
+7. Prize-Aware Boss's Orders Gusting:
+   - Gusts vulnerable opponent bench targets within lethal knockout range.
+8. 100% Crash-Proof Execution:
+   - Pure Python standard library without local file path dependencies and wrapped in safe try/except fallback.
 """
 
 from __future__ import annotations
@@ -59,9 +54,6 @@ XEROSIC = 1197
 HILDA = 1225
 LILLIE = 1227
 WALLY = 1229
-
-# Stadium IDs
-NEUTRALIZATION_ZONE = 1247
 
 ENERGY_IDS = {MIST, ENRICHING, SPIKY}
 BASIC_IDS = {FAN_ROTOM, DUNSPARCE, BUNEARY}
@@ -310,25 +302,6 @@ def board_counts(state: dict[str, Any], player: int) -> dict[int, int]:
     return counts
 
 
-def stadium_id_in_play(state: dict[str, Any]) -> int | None:
-    stadiums = state.get("stadium") or []
-    if stadiums and isinstance(stadiums[0], dict):
-        return card_id(stadiums[0])
-    return None
-
-
-def is_damage_immune(state: dict[str, Any], defender: dict[str, Any] | None) -> bool:
-    if not isinstance(defender, dict):
-        return False
-    def_id = card_id(defender)
-    if def_id in DAMAGE_PROTECTION_POKEMON:
-        return True
-    st_id = stadium_id_in_play(state)
-    if st_id == NEUTRALIZATION_ZONE and def_id not in EX_POKEMON:
-        return True
-    return False
-
-
 def reset_game_memory():
     global LAST_TURN, TURN_START_ACTIVE, SEEN_MENUS, ATTACK_DEFERRALS
     global FORCE_READY_PROMOTION, WALLY_HEALED_SERIAL, WALLY_HEALED_WAS_ACTIVE
@@ -424,7 +397,7 @@ def current_attack_damage_against(state: dict[str, Any], target: dict[str, Any] 
     attacker = active(state, yi)
     if card_id(attacker) != LOPUNNY or attached_count(attacker) < 1:
         return 0
-    if is_damage_immune(state, target):
+    if card_id(target) in DAMAGE_PROTECTION_POKEMON:
         return 160 if attached_count(attacker) >= 2 else 0
     return current_attack_ceiling(state)
 
@@ -433,19 +406,20 @@ def opponent_target_value(obs: dict[str, Any], card: dict[str, Any] | None, area
     if not isinstance(card, dict):
         return -10000.0
     state = current(obs)
-    yi = your_index(state)
     target_hp = hp(card)
     damage = current_attack_damage_against(state, card)
     prizes = prize_value(card)
-    
-    value = damage_on(card) * 3.0 + attached_count(card) * 100.0 + prizes * 300.0
+    value = (max_hp(card) - target_hp) * 2.0
+    value += attached_count(card) * 90.0
+    value += prizes * 260.0
     value += 40.0 if area == 4 else 0.0
-    
     if damage and 0 < target_hp <= damage:
-        value += 3000.0 + (prizes * 1000.0)
-        if prizes >= prize_count(state, yi):
-            value += 20000.0
+        value += 2600.0
+        value += prizes * 700.0
+        if prizes >= prize_count(state, your_index(state)):
+            value += 12000.0
     elif target_hp:
+        value += max(0, damage - target_hp) * 0.2
         value -= target_hp * 0.25
     return value
 
@@ -498,12 +472,6 @@ def discard_keep_value(obs: dict[str, Any], card: dict[str, Any] | None, option:
     index = option.get("index")
     duplicate_rank = sum(1 for val in hand_now[:index] if val == cid) if isinstance(index, int) else 0
     value = 100.0
-    
-    # Check if we need energy / draw lifeline
-    active_unpowered = attached_count(active(state, yi)) == 0
-    has_energy_in_hand = any(c in ENERGY_IDS for c in hand_now)
-    need_draw_lifeline = active_unpowered or not has_energy_in_hand
-
     if cid == LOPUNNY:
         unevolved = counts.get(BUNEARY, 0)
         value = 1100.0 if duplicate_rank < unevolved else 250.0
@@ -522,9 +490,7 @@ def discard_keep_value(obs: dict[str, Any], card: dict[str, Any] | None, option:
         unready = sum(1 for _, _, c in board(state, yi) if card_id(c) in (BUNEARY, LOPUNNY) and attached_count(c) < 2)
         value = 650.0 if unready else 100.0
     elif cid == HILDA:
-        value = 1400.0 if need_draw_lifeline else (760.0 if counts.get(BUNEARY, 0) else 220.0)
-    elif cid == LILLIE:
-        value = 1350.0 if need_draw_lifeline else 420.0
+        value = 760.0 if counts.get(BUNEARY, 0) else 220.0
     elif cid == WALLY:
         lopunny_lines = counts.get(BUNEARY, 0) + counts.get(LOPUNNY, 0)
         damaged_lopunny = any(damage_on(c) >= 80 for _, _, c in board(state, yi) if card_id(c) == LOPUNNY)
@@ -535,7 +501,9 @@ def discard_keep_value(obs: dict[str, Any], card: dict[str, Any] | None, option:
         opp = 1 - yi
         ps = players(state)
         opp_hand = as_int(ps[opp].get("handCount"), 0) if opp < len(ps) else 0
-        value = 250.0 if need_draw_lifeline else (680.0 if opp_hand >= 6 else 100.0)
+        value = 680.0 if opp_hand >= 6 else 100.0
+    elif cid == LILLIE:
+        value = 420.0
     elif cid in (POFFIN, POKE_PAD, ULTRA_BALL):
         value = 380.0 if bench_capacity(state, yi) else 60.0
     elif cid == POKEGEAR:
@@ -621,7 +589,7 @@ def wally_target_value(state: dict[str, Any], card: dict[str, Any] | None, area:
     energy_after = energy_available_after_wally(state, card)
     free_retreat = has_tool(card, AIR_BALLOON)
     can_retreat = not bool(state.get("retreated"))
-    protection_break_needed = is_damage_immune(state, active(state, 1 - yi))
+    protection_break_needed = card_id(active(state, 1 - yi)) in DAMAGE_PROTECTION_POKEMON
 
     if protection_break_needed:
         coherent = retreat_available and can_retreat and free_retreat and spiky_ready_bench
@@ -645,21 +613,19 @@ def supporter_value(obs: dict[str, Any], cid: int | None, from_search: bool = Fa
     counts = board_counts(state, yi)
     cards_in_hand = len(hand(state, yi))
     opponent_bench = bench(state, opp)
-    
     boss_targets = [c for c in opponent_bench if 0 < hp(c) <= current_attack_damage_against(state, c)]
     boss_ko = bool(boss_targets)
 
     if cid == BOSS:
         if boss_ko:
             best_prizes = max(prize_value(c) for c in boss_targets)
-            best_dmg = max(damage_on(c) for c in boss_targets)
-            value = 6500.0 + best_prizes * 800.0 + best_dmg * 6.0
+            value = 6100.0 + best_prizes * 650.0
             if best_prizes >= prize_count(state, yi):
-                value += 20000.0
+                value += 12000.0
         elif opponent_bench:
-            value = 3200.0
+            value = 3000.0
         else:
-            value = 200.0
+            value = 300.0
     elif cid == WALLY:
         retreat_available = any(option.get("type") == 12 for option in selection(obs).get("option") or [])
         values = [wally_target_value(state, card, area, retreat_available) for area, _, card in board(state, yi)]
@@ -667,7 +633,7 @@ def supporter_value(obs: dict[str, Any], cid: int | None, from_search: bool = Fa
     elif cid == HILDA:
         missing_lopunny = counts.get(BUNEARY, 0) > hand_ids(state, yi).count(LOPUNNY)
         unpowered = any(card_id(card) in (BUNEARY, LOPUNNY) and attached_count(card) < 1 for _, _, card in board(state, yi))
-        value = 5800.0 if (missing_lopunny or unpowered) else 1200.0
+        value = 5600.0 if missing_lopunny else (4200.0 if unpowered else 1200.0)
     elif cid == XEROSIC:
         value = 900.0 + max(0, opp_hand - 3) * 500.0
         if opp_hand <= 4:
@@ -675,7 +641,7 @@ def supporter_value(obs: dict[str, Any], cid: int | None, from_search: bool = Fa
     elif cid == LILLIE:
         own_prizes = prize_count(state, yi)
         draw_to = 8 if own_prizes == 6 else 6
-        value = 3200.0 + max(0, draw_to - cards_in_hand) * 600.0
+        value = 2200.0 + max(0, draw_to - cards_in_hand) * 520.0
         if cards_in_hand > draw_to + 2:
             value = 200.0
     else:
@@ -732,7 +698,7 @@ def attach_score(obs: dict[str, Any], option: dict[str, Any]) -> float:
         score = 2900.0
         if area == 4 and not bool(state.get("retreated")):
             ready_bench = any(lopunny_ready(c) for c in bench(state, yi))
-            score += 3500.0 if ready_bench else 500.0
+            score += 2400.0 if ready_bench else 500.0
         if target_id == LOPUNNY:
             score += 900.0
         elif target_id in (DUNSPARCE, BUNEARY):
@@ -743,58 +709,32 @@ def attach_score(obs: dict[str, Any], option: dict[str, Any]) -> float:
         return 200.0
     if bool(state.get("energyAttached")) and option.get("area") == 2:
         return -4000.0
-        
-    our_active = active(state, yi)
-    opposing_active = active(state, 1 - yi)
-    protection_break_needed = is_damage_immune(state, opposing_active)
     energy_count = attached_count(target)
-    turn_num = as_int(state.get("turn"), 0)
-
-    # Core Invariant 1: Trapped Active Support Escape Rule
-    # If active is Dunsparce/Fan Rotom with 0E and NO Balloon, and bench has ready/readying Lopunny:
-    # Attaching 1 energy to active lets it pay 1-retreat cost to promote the attacker!
-    if area == 4 and target_id in (DUNSPARCE, FAN_ROTOM) and energy_count == 0:
-        bench_has_ready_lopunny = any(lopunny_ready(c) for c in bench(state, yi))
-        if bench_has_ready_lopunny and not has_tool(our_active, AIR_BALLOON) and not bool(state.get("retreated")):
-            return 6800.0 # Enable retreat!
-
-    # Core Invariant 2: Enriching Energy on Turn 1 (or when no attacker can strike this turn) gives draw acceleration!
-    attacker_can_strike = turn_num >= 2 and any(
-        (card_id(c) == LOPUNNY or (card_id(c) == BUNEARY and LOPUNNY in hand_ids(state, yi)))
-        for _, _, c in board(state, yi)
-    )
-
     if target_id not in (BUNEARY, LOPUNNY):
         if cid == ENRICHING and target_id in (DUNSPARCE, FAN_ROTOM) and energy_count == 0:
-            if attacker_can_strike and card_id(our_active) in (BUNEARY, LOPUNNY) and attached_count(our_active) == 0:
-                return -2000.0 # Force attacker power on Turn 2+!
             stadium_live = bool(state.get("stadium"))
             return 7100.0 + (500.0 if target_id == FAN_ROTOM and stadium_live else 0.0)
         return 500.0 if target_id in (DUNSPARCE, FAN_ROTOM) else -800.0
-
     if energy_count >= 2:
         return -2500.0
-
     score = 3900.0
     if cid == ENRICHING:
         score += 1800.0
     elif cid == MIST:
-        threat = card_id(opposing_active) in MIST_THREATS
+        threat = card_id(active(state, 1 - yi)) in MIST_THREATS
         score += 1500.0 if threat else 350.0
     elif cid == SPIKY:
         score += 900.0
-        
     if energy_count == 0:
-        score += 1800.0
+        score += 1500.0
     else:
         score += 650.0
-        
     if area == 4:
-        score += 450.0
+        score += 350.0
 
     target_serial = target.get("serial") if isinstance(target, dict) else None
+    our_active = active(state, yi)
     active_serial = our_active.get("serial") if isinstance(our_active, dict) else None
-    
     if WALLY_HEALED_SERIAL is not None:
         if WALLY_HEALED_WAS_ACTIVE and active_serial == WALLY_HEALED_SERIAL:
             ready_bench = any(lopunny_ready(card) for card in bench(state, yi))
@@ -812,13 +752,14 @@ def attach_score(obs: dict[str, Any], option: dict[str, Any]) -> float:
         elif not WALLY_HEALED_WAS_ACTIVE and target_serial == WALLY_HEALED_SERIAL and area == 5:
             score += 4200.0
 
+    opposing_active = active(state, 1 - yi)
+    protection_break_needed = card_id(opposing_active) in DAMAGE_PROTECTION_POKEMON
     pivot_ko_window = not protection_break_needed and 160 < hp(opposing_active) <= 230
     if area == 4 and target_id == LOPUNNY and energy_count == 1:
         if protection_break_needed:
-            score += 6800.0
+            score += 6500.0
         elif not pivot_ko_window:
             score += 2800.0
-            
     if energy_count == 1:
         other_unpowered = any(
             card_id(card) in (BUNEARY, LOPUNNY)
@@ -859,13 +800,7 @@ def ability_score(obs: dict[str, Any], option: dict[str, Any]) -> float:
     source = option_source(obs, option)
     cid = card_id(source)
     area = option.get("area")
-    
     if cid == DUDUNSPARCE:
-        pls = players(state)
-        deck_count = as_int(pls[yi].get("deckCount"), 20) if yi < len(pls) else 20
-        if deck_count <= 2:
-            return -10000.0 # Anti-deck-out safeguard
-            
         if area == 5:
             switching_active = card_id(active(state, yi)) in (DUNSPARCE, BUNEARY)
             attack_available = any(choice.get("type") == 13 for choice in selection(obs).get("option") or [])
@@ -888,12 +823,11 @@ def retreat_score(obs: dict[str, Any], option: dict[str, Any]) -> float:
     act_card = active(state, yi)
     active_serial = act_card.get("serial") if isinstance(act_card, dict) else None
     best = best_lopunny(state, yi, exclude_serial=active_serial)
-    opposing_active = active(state, 1 - yi)
-    protection_break_needed = is_damage_immune(state, opposing_active)
-    
     if best and best[0]:
-        if protection_break_needed and not best[1]:
-            return -12000.0
+        opposing_active = active(state, 1 - yi)
+        if card_id(opposing_active) in DAMAGE_PROTECTION_POKEMON:
+            if not best[1]:
+                return -12000.0
         score = 7600.0
         if card_id(act_card) == LOPUNNY:
             score += damage_on(act_card) * 3.0
@@ -911,25 +845,23 @@ def attack_score(obs: dict[str, Any], option: dict[str, Any]) -> float:
     our_active = active(state, yi)
     attack_id = option.get("attackId")
     opponent = active(state, 1 - yi)
+    opponent_id = card_id(opponent)
     opponent_hp = hp(opponent)
-    opponent_immune = is_damage_immune(state, opponent)
 
     if card_id(our_active) == LOPUNNY:
         damage = effective_lopunny_damage(state, attack_id)
         score = 4300.0 + damage * 9.0
-        
-        if opponent_immune:
+        if opponent_id in DAMAGE_PROTECTION_POKEMON:
             if attack_id == SPIKY_HOPPER:
-                score += 5500.0
+                score += 4300.0
             else:
-                score -= 6500.0 # Gale Thrust deals 0 damage against protected targets
-                
-        if not opponent_immune and 0 < opponent_hp <= damage:
+                score -= 4800.0
+        if 0 < opponent_hp <= damage:
             score += 6200.0
             prizes = prize_value(opponent)
             score += prizes * 1100.0
             if prizes >= prize_count(state, yi):
-                score += 15000.0
+                score += 12000.0
         if attack_id == GALE_THRUST and not active_moved_this_turn(state):
             score -= 1600.0
         if attack_id == SPIKY_HOPPER and attached_count(our_active) >= 2:
