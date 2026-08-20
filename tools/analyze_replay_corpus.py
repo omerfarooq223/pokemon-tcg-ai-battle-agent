@@ -87,9 +87,10 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("corpus", nargs="?", type=Path, default=DEFAULT_CORPUS)
     args = parser.parse_args()
+    corpus = args.corpus.resolve()
 
     names = load_card_names()
-    unique, duplicates = load_unique_replays(args.corpus)
+    unique, duplicates = load_unique_replays(corpus)
     agent_records = defaultdict(lambda: {"wins": 0, "losses": 0, "decks": Counter()})
     episode_rows = []
 
@@ -147,7 +148,7 @@ def main() -> None:
         "agents": summary_agents,
         "episodes": episode_rows,
     }
-    output = args.corpus / "corpus_summary.json"
+    output = corpus / "corpus_summary.json"
     output.write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n")
 
     print(f"unique episodes: {len(unique)}")
