@@ -1,75 +1,99 @@
 # Pokémon TCG AI Battle Agent
 
-A rule-based, state-aware agent developed for Kaggle's
-[Pokémon TCG AI Battle Challenge](https://www.kaggle.com/competitions/pokemon-tcg-ai-battle).
-The project tracks the evolution from a legal-action baseline to an agent that plans
-attack readiness, colored-energy placement, promotion, search targets, healing,
-hand control, and bounded pre-attack setup.
+A highly optimized, rule-based, state-aware AI decision engine developed for Kaggle's [Pokémon TCG AI Battle Challenge](https://www.kaggle.com/competitions/pokemon-tcg-ai-battle).
 
-## Repository layout
+This repository documents the evolution of a custom Pokémon Trading Card Game agent from a simple legal-action baseline up to a sophisticated dynamic planning system that manages energy routing, bench composition, hand size, damage immunity, healing loops, and targeted bench gusting.
 
-- `agents/` — versioned agent and deck snapshots.
-- `experiments/` — rejected ideas and replay-informed stress agents.
-- `tools/` — submission building, local matches, replay analysis, and evaluation.
-- `artifacts/*.csv` — selected compact benchmark summaries.
-- `main.py` and `deck.csv` — the original baseline retained for reproducibility.
+---
 
-Large or derived files are intentionally excluded from Git: the local Python
-environment, official Kaggle downloads and simulator binaries, raw replay JSON,
-submission archives, detailed traces, caches, and leaderboard snapshots.
+## 🏆 Competition Achievements & Top Agents
 
-## Agent versions
+*   **V11 Candidate Agent (Peak Leaderboard: 992)**: Reverted to a one-prize defensive *Crustle/Cornerstone* shell. Optimizes bench space (capping search targets to 3 viable lines) and actively scans prize zones to out-resource high-damage, multi-prize opponents.
+*   **V18 Candidate Agent (Final Certified Deployment)**: Designed around a *Mega Lopunny ex* high-HP engine supported by *Dudunsparce* card draw. Includes dynamic damage-immunity counters, active pivot support escape, and quad-healing loops using *Wally's Compassion*. Certified locally at a **91.50% Win Rate** across 294 matches.
 
-- **V1:** original legal-action baseline.
-- **V2:** generic action ranking with a compact replay-trained tie-breaker.
-- **V3:** state-aware card, attacker, and energy planner.
-- **V4:** Crustle/Cornerstone deck with a bounded mandatory-attack guard.
-- **V5:** V4's core plus state-driven hand control for large-hand engines.
+---
 
-Each version directory contains its editable `main.py` policy and 60-card
-`deck.csv`. Submission archives are generated from these two source files and are
-not versioned because they can be reproduced exactly with the build tool.
+## 📂 Repository Layout
 
-## Build an agent submission
+```
+├── agents/             # Versioned agent policy implementations and 60-card decks (v1 to v18)
+├── artifacts/          # Compact markdown report logs and final submission packages
+├── docs/               # Detailed documentation (Agent Lineage, System Architecture, Build Guide)
+├── experiments/        # Historical trials, rejected deck profiles, and stress agents
+├── tools/              # Local simulators, benchmark evaluations, and submission builders
+├── LICENSE             # MIT License
+└── README.md           # Repository overview (this file)
+```
 
-For example, to package V5:
+---
+
+## 🤖 Agent Evolution
+
+Below is the evolution of the agent versions built during the competition:
+
+| Version | Core Architecture | Key Breakthrough / Strategy |
+|---|---|---|
+| **V1** | Legal Action Baseline | Picks legal actions randomly, acts as the control baseline. |
+| **V2** | Action Ranking | Introduces rule tables and action ranking heuristics. |
+| **V3** | Multi-Turn Planner | Tracks and powers single attackers rather than spreading energy. |
+| **V4** | Crustle/Cornerstone Shell | Employs one-prize stallers with bounded mandatory-attack routines. |
+| **V5** | Hand size heuristics | Limits draw sequences against opponent hand disruption. |
+| **V6–V8** | Pivot Optimization | Integrates Air Balloon attachments and active position safety. |
+| **V9** | Supporter Cycling | Caches and cycles supporter cards using Poké Pad. |
+| **V10** | Mega Lopunny ex test | Initial implementation of high-HP offensive sweepers (Mega ex). |
+| **V11** | **Peak Stall (992 Rating)** | Return to 1-prize Crustle; adds bench limits and prize-zone checks. |
+| **V12–V17** | Immunity & Heals | Introduces Wally healing loops and initial Cornerstone ability counters. |
+| **V18** | **Final certified Lopunny** | Pierces damage-immunity with *Spiky Hopper*; quad-Wally heal loop. |
+
+Detailed specifications and local benchmark results for all versions are documented in the [Agent Version History](file:///Users/muhammadomerfarooq/Desktop/GitHub%20Repositories/Pokemon%20Challenge/docs/AGENTS.md).
+
+---
+
+## 🛠️ Getting Started & Usage
+
+### 1. Build a Submission
+Submission archives (`.tar.gz`) contain `main.py` and `deck.csv` at the root. You can package any agent version using the build tool:
 
 ```bash
 python3 tools/build_submission.py \
-  --agent-dir agents/v5_candidate \
-  --output artifacts/submisson_5.tar.gz
+  --agent-dir agents/v18_candidate \
+  --output artifacts/submission_18.tar.gz
 ```
 
-The builder validates Kaggle's raw-loader behavior, the 60-card deck, archive
-contents, and Python compilation. Generated upload archives remain local and are
-ignored by Git.
+The builder validates:
+*   Standard library constraints (no disk path or external package assumptions).
+*   Deck card count (exactly 60 cards).
+*   Compilation success.
 
-## Run local matches
-
-After installing the official simulator files:
+### 2. Run Local Matches
+Test agent policies locally by running matches inside the simulator. Swapping seats ensures balanced evaluation:
 
 ```bash
 python3 tools/run_local_matches.py \
-  --agent-dir agents/v5_candidate \
-  --opponent-dir agents/v4_attackfix \
+  --agent-dir agents/v18_candidate \
+  --opponent-dir agents/v11_candidate \
   --matches 100 \
   --swap-seats
 ```
 
-Use `python3 tools/run_local_matches.py --help` for the complete set of options.
+### 3. Evaluate Benchmarks
+Verify policies against custom test benches or evaluation decks:
 
-## Development principles
+```bash
+python3 tools/run_exhaustive_v18_tests.py
+```
 
-- Choose only from legal actions supplied by the simulator.
-- Use state and card semantics rather than opponent names or replay IDs.
-- Finish one compatible attacker instead of spreading energy blindly.
-- Treat attack selection as a safety invariant.
-- Validate challengers against frozen baselines, stress matchups, and broad
-  replay-derived deck coverage.
+---
 
-## License and data
+## 📖 Deep Dives
 
-No open-source license has been selected yet, so normal copyright applies. Pokémon,
-Pokémon TCG, and related names are trademarks of their respective owners. Official
-competition files and replay data are governed by Kaggle's and the competition
-organizer's terms.
+*   For an in-depth walkthrough of the state evaluation engine, action heuristics, and dynamic board scoring, see the [Agent Architecture Guide](file:///Users/muhammadomerfarooq/Desktop/GitHub%20Repositories/Pokemon%20Challenge/docs/ARCHITECTURE.md).
+*   For the raw build configurations and older CLI references, see the [V9 Build Guide](file:///Users/muhammadomerfarooq/Desktop/GitHub%20Repositories/Pokemon%20Challenge/docs/V9_BUILD_GUIDE.md).
+
+---
+
+## ⚖️ License
+
+This project is open-sourced under the [MIT License](file:///Users/muhammadomerfarooq/Desktop/GitHub%20Repositories/Pokemon%20Challenge/LICENSE).
+
+*Disclaimer: Pokémon, Pokémon TCG, and character names are trademarks of Nintendo, Game Freak, and The Pokémon Company.*
